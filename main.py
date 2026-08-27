@@ -20,7 +20,7 @@ from fastapi import FastAPI, File, UploadFile, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response, RedirectResponse
 from pydantic import BaseModel
 
-app = FastAPI(title="Tax Radar", version="1.4.0")
+app = FastAPI(title="Tax Radar", version="1.5.0")
 
 
 REPORT_PRICE_RUB = 499
@@ -134,10 +134,106 @@ def extract_merchant(desc: str) -> str:
     return "Не удалось определить"
 
 
-def parse_alfa_pdf(data: bytes) -> list[dict[str, Any]]:
-    from pypdf import PdfReader
-    reader = PdfReader(io.BytesIO(data))
-    text = "\n".join((p.extract_text() or "") for p in reader.pages)
+TBANK_PAIR_RE = re.compile(
+    r"(?m)^(\d{2}\.\d{2}\.\d{4})\n(\d{2}:\d{2})\n"
+    r"(\d{2}\.\d{2}\.\d{4})\n(\d{2}:\d{2})\n"
+)
+
+
+def extract_tbank_merchant(description: str) -> str:
+    s = normalize(description)
+
+    m = re.match(r"Оплата в\s+(.+)", s, re.I)
+    if m:
+        merchant = m.group(1).strip()
+        location_patterns = [
+            r"\s+Gorod\s+Moskva\s+RUS$",
+            r"\s+MOSKVA\s+RUS$",
+            r"\s+Moskva\s+RUS$",
+            r"\s+MOSCOW\s+RUS$",
+            r"\s+Moscow\s+RU$",
+            r"\s+Moskva\s+RU$",
+            r"\s+G\s+MOSKVA\s+RU$",
+            r"\s+Москва\s+Россия$",
+            r"\s+[A-Za-zА-Яа-яЁё.\-]+\s+(?:RUS|RU|BLR)$",
+        ]
+        for pattern in location_patterns:
+            merchant = re.sub(pattern, "", merchant, flags=re.I).strip()
+        return merchant[:100] or "Оплата картой"
+
+    m = re.match(r"Оплата услуг\s+(.+)", s, re.I)
+    if m:
+        return m.group(1).strip()[:100]
+
+    return s[:100] or "Операция"
+
+
+def parse_tbank_pdf_text(text: str) -> list[dict[str, Any]]:
+    pairs = list(TBANK_PAIR_RE.finditer(text))
+    if not pairs:
+        raise ValueError("Не удалось найти операции в выписке Т-Банка.")
+
+    txs: list[dict[str, Any]] = []
+
+    for i, pair in enumerate(pairs):
+        end = pairs[i + 1].start() if i + 1 < len(pairs) else len(text)
+        block = text[pair.end():end]
+
+        cut_positions = []
+        for marker in (
+            'АО «ТБанк»',
+            'АО "ТБанк"',
+            "АКЦИОНЕРНОЕ ОБЩЕСТВО «ТБАНК»",
+            "Дата и время\nоперации",
+            "Пополнения:",
+            "Расходы:",
+            "С уважением,",
+        ):
+            pos = block.find(marker)
+            if pos >= 0:
+                cut_positions.append(pos)
+        if cut_positions:
+            block = block[:min(cut_positions)]
+
+        m = re.match(
+            r"(?s)^\s*"
+            r"([+-]?\d[\d ]*[.,]\d{2})\s+(\S+)\s+"
+            r"([+-]?\d[\d ]*[.,]\d{2})\s+₽\s+"
+            r"(.*?)\s*$",
+            block,
+        )
+        if not m:
+            continue
+
+        operation_amount, operation_currency, card_amount, description = m.groups()
+
+        card_match = re.search(r"(?:^|\s)(—|\d{4})\s*$", description)
+        card_last4 = ""
+        if card_match:
+            card_last4 = card_match.group(1)
+            description = description[:card_match.start()].strip()
+
+        desc = normalize(description)
+
+        txs.append({
+            "date": pair.group(1),
+            "code": f"TBANK_{i + 1:05d}",
+            "description": desc,
+            "merchant": extract_tbank_merchant(desc),
+            "amount": money_to_float(card_amount),
+            "bank": "Т-Банк",
+            "posting_date": pair.group(3),
+            "card_last4": card_last4,
+            "operation_currency": operation_currency,
+            "operation_amount": money_to_float(operation_amount),
+        })
+
+    if not txs:
+        raise ValueError("Не удалось распознать операции в выписке Т-Банка.")
+    return txs
+
+
+def parse_alfa_pdf_text(text: str) -> list[dict[str, Any]]:
     txs = []
     for m in TX_RE.finditer(text):
         date, code, body = m.groups()
@@ -146,11 +242,49 @@ def parse_alfa_pdf(data: bytes) -> list[dict[str, Any]]:
             continue
         amount = money_to_float(amounts[-1])
         desc = normalize(body)
-        txs.append({"date": date, "code": code, "description": desc, "merchant": extract_merchant(desc), "amount": amount})
+        txs.append({
+            "date": date,
+            "code": code,
+            "description": desc,
+            "merchant": extract_merchant(desc),
+            "amount": amount,
+            "bank": "Альфа-Банк",
+        })
     if not txs:
-        raise ValueError("Не удалось распознать операции в PDF. Сейчас лучше всего поддерживается выписка Альфа-Банка.")
+        raise ValueError("Не удалось распознать операции в выписке Альфа-Банка.")
     return txs
 
+
+def extract_pdf_text(data: bytes) -> str:
+    from pypdf import PdfReader
+    reader = PdfReader(io.BytesIO(data))
+    return "\n".join((p.extract_text() or "") for p in reader.pages)
+
+
+def detect_pdf_bank_from_text(text: str) -> str:
+    upper = text.upper()
+
+    if (
+        "ТБАНК" in upper
+        or "Т-БАНК" in upper
+        or "TBANK.RU" in upper
+        or "ТИНЬКОФФ БАНК" in upper
+        or "TINKOFF BANK" in upper
+    ) and ("СПРАВКА О ДВИЖЕНИИ СРЕДСТВ" in upper or TBANK_PAIR_RE.search(text)):
+        return "tbank"
+
+    if "АЛЬФА" in upper or "ALFA" in upper or RUR_AMOUNT_RE.search(text):
+        return "alfa"
+
+    return "unknown"
+
+
+def parse_alfa_pdf(data: bytes) -> list[dict[str, Any]]:
+    return parse_alfa_pdf_text(extract_pdf_text(data))
+
+
+def parse_tbank_pdf(data: bytes) -> list[dict[str, Any]]:
+    return parse_tbank_pdf_text(extract_pdf_text(data))
 
 def _guess_column(headers: list[str], variants: list[str]) -> str | None:
     low = {h.lower().strip(): h for h in headers}
@@ -291,7 +425,7 @@ def index():
 
 @app.get("/health")
 def health():
-    return {"ok": True, "version": "1.4.0"}
+    return {"ok": True, "version": "1.5.0"}
 
 
 @app.post("/api/analyze")
@@ -304,7 +438,14 @@ async def analyze(file: UploadFile = File(...)):
     name = (file.filename or "").lower()
     try:
         if name.endswith(".pdf"):
-            txs, parser = parse_alfa_pdf(data), "Альфа-Банк PDF"
+            pdf_text = extract_pdf_text(data)
+            bank = detect_pdf_bank_from_text(pdf_text)
+            if bank == "tbank":
+                txs, parser = parse_tbank_pdf_text(pdf_text), "Т-Банк PDF"
+            elif bank == "alfa":
+                txs, parser = parse_alfa_pdf_text(pdf_text), "Альфа-Банк PDF"
+            else:
+                raise ValueError("Не удалось определить формат PDF. Сейчас поддерживаются выписки Альфа-Банка и Т-Банка.")
         elif name.endswith(".csv"):
             txs, parser = parse_csv(data), "CSV"
         elif name.endswith(".xlsx") or name.endswith(".xlsm"):
@@ -743,7 +884,7 @@ th{color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.06e
 <body>
 <div class="wrap">
   <header class="header">
-    <div class="brand"><span class="brandMark">₽</span>Tax Radar <span class="beta">PAID 1.4</span></div>
+    <div class="brand"><span class="brandMark">₽</span>Tax Radar <span class="beta">PAID 1.5</span></div>
     <div class="secure"><span class="secureDot"></span>Файл не сохраняется после анализа</div>
   </header>
 
@@ -758,7 +899,7 @@ th{color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.06e
       </div>
     </div>
     <div class="preview">
-      <div class="previewTop"><span>Результат</span><span class="previewPill">PAID 1.4</span></div>
+      <div class="previewTop"><span>Результат</span><span class="previewPill">PAID 1.5</span></div>
       <div class="previewLabel">Можно вернуть</div>
       <div class="previewMoney">от 20 208 ₽</div>
       <div class="previewFast"><i>✓</i>15 078 ₽ — за 2 простых действия</div>
@@ -780,7 +921,7 @@ th{color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.06e
         <div class="uploadIcon">↥</div>
         <div class="uploadMeta">
           <div class="uploadTitle" id="fname">Выберите банковскую выписку</div>
-          <div class="uploadSub" id="fileSub">PDF, CSV или XLSX · до 30 МБ</div>
+          <div class="uploadSub" id="fileSub">Альфа-Банк / Т-Банк · PDF, CSV или XLSX · до 30 МБ</div>
         </div>
       </div>
       <span class="uploadPick" id="uploadPick">Выбрать файл</span>
