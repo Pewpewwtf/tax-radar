@@ -4,16 +4,77 @@ import csv
 import hashlib
 import io
 import re
+import os
+import time
+import uuid
+import json
+import base64
+import urllib.request
+import urllib.error
 from collections import defaultdict
 from datetime import datetime
 from html import escape
 from typing import Any
 
-from fastapi import FastAPI, File, UploadFile, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi import FastAPI, File, UploadFile, HTTPException, Request
+from fastapi.responses import HTMLResponse, JSONResponse, Response, RedirectResponse
 from pydantic import BaseModel
 
-app = FastAPI(title="Tax Radar", version="1.3.1")
+app = FastAPI(title="Tax Radar", version="1.4.0")
+
+
+REPORT_PRICE_RUB = 499
+ANALYSIS_TTL_SECONDS = 2 * 60 * 60
+ANALYSES: dict[str, dict[str, Any]] = {}
+
+YOOKASSA_SHOP_ID = os.getenv("YOOKASSA_SHOP_ID", "").strip()
+YOOKASSA_SECRET_KEY = os.getenv("YOOKASSA_SECRET_KEY", "").strip()
+PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
+PAYMENT_TEST_MODE = os.getenv("PAYMENT_TEST_MODE", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def cleanup_analyses() -> None:
+    now = time.time()
+    expired = [k for k, v in ANALYSES.items() if now - v.get("created_at", now) > ANALYSIS_TTL_SECONDS]
+    for k in expired:
+        ANALYSES.pop(k, None)
+
+
+def get_analysis_or_404(analysis_id: str) -> dict[str, Any]:
+    cleanup_analyses()
+    item = ANALYSES.get(analysis_id)
+    if not item:
+        raise HTTPException(404, "Результат анализа не найден или срок хранения истёк. Загрузите выписку ещё раз.")
+    return item
+
+
+def yookassa_request(method: str, path: str, payload: dict[str, Any] | None = None, idempotence_key: str | None = None) -> dict[str, Any]:
+    if not (YOOKASSA_SHOP_ID and YOOKASSA_SECRET_KEY):
+        raise HTTPException(503, "Оплата пока не подключена: добавьте YOOKASSA_SHOP_ID и YOOKASSA_SECRET_KEY в Timeweb.")
+    url = "https://api.yookassa.ru/v3" + path
+    token = base64.b64encode(f"{YOOKASSA_SHOP_ID}:{YOOKASSA_SECRET_KEY}".encode("utf-8")).decode("ascii")
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8") if payload is not None else None
+    headers = {
+        "Authorization": f"Basic {token}",
+        "Content-Type": "application/json",
+    }
+    if idempotence_key:
+        headers["Idempotence-Key"] = idempotence_key
+    req = urllib.request.Request(url, data=body, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8", errors="replace")
+        raise HTTPException(502, f"ЮKassa вернула ошибку: {detail[:500]}")
+    except Exception as e:
+        raise HTTPException(502, f"Не удалось связаться с ЮKassa: {e}")
+
+
+def public_base_url(request: Request) -> str:
+    if PUBLIC_BASE_URL:
+        return PUBLIC_BASE_URL
+    return str(request.base_url).rstrip("/")
 
 CATEGORY_META = {
     "medicine": {"name": "Медицина", "emoji": "🏥", "confidence": "high", "note": "Похоже на оплату медицинских услуг. Для вычета потребуется подтверждение от медицинской организации."},
@@ -230,7 +291,7 @@ def index():
 
 @app.get("/health")
 def health():
-    return {"ok": True, "version": "1.0.0"}
+    return {"ok": True, "version": "1.4.0"}
 
 
 @app.post("/api/analyze")
@@ -250,13 +311,110 @@ async def analyze(file: UploadFile = File(...)):
             txs, parser = parse_xlsx(data), "XLSX"
         else:
             raise ValueError("Поддерживаются PDF, CSV и XLSX.")
+
         result = analyze_transactions(txs)
         result["filename"], result["parser"] = file.filename, parser
-        return JSONResponse(result)
+
+        analysis_id = uuid.uuid4().hex
+        cleanup_analyses()
+        ANALYSES[analysis_id] = {
+            "created_at": time.time(),
+            "result": result,
+            "paid": False,
+            "payment_id": None,
+        }
+
+        # ВАЖНО: до оплаты браузер получает только агрегаты, без категорий и транзакций.
+        return JSONResponse({
+            "analysis_id": analysis_id,
+            "expenses_found": result["candidates_amount"],
+            "refund_from": result["potential_if_all_confirmed"]["refund_from"],
+            "price": REPORT_PRICE_RUB,
+        })
     except ValueError as e:
         raise HTTPException(422, str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(500, f"Ошибка обработки: {e}")
+
+
+class PaymentPayload(BaseModel):
+    analysis_id: str
+
+
+@app.post("/api/create-payment")
+def create_payment(payload: PaymentPayload, request: Request):
+    item = get_analysis_or_404(payload.analysis_id)
+    if item.get("paid"):
+        return {"status": "succeeded", "confirmation_url": f"{public_base_url(request)}/?analysis={payload.analysis_id}&paid=1"}
+
+    if PAYMENT_TEST_MODE:
+        payment_id = "test_" + uuid.uuid4().hex
+        item["payment_id"] = payment_id
+        return {
+            "status": "pending",
+            "test_mode": True,
+            "confirmation_url": f"{public_base_url(request)}/api/test-pay?analysis_id={payload.analysis_id}&payment_id={payment_id}",
+        }
+
+    return_url = f"{public_base_url(request)}/?analysis={payload.analysis_id}&payment=return"
+    payment = yookassa_request(
+        "POST",
+        "/payments",
+        {
+            "amount": {"value": f"{REPORT_PRICE_RUB:.2f}", "currency": "RUB"},
+            "capture": True,
+            "confirmation": {"type": "redirect", "return_url": return_url},
+            "description": "Tax Radar — персональный налоговый отчёт",
+            "metadata": {"analysis_id": payload.analysis_id},
+        },
+        idempotence_key=str(uuid.uuid4()),
+    )
+    item["payment_id"] = payment.get("id")
+    confirmation_url = (payment.get("confirmation") or {}).get("confirmation_url")
+    if not confirmation_url:
+        raise HTTPException(502, "ЮKassa не вернула ссылку на оплату.")
+    return {"status": payment.get("status", "pending"), "confirmation_url": confirmation_url}
+
+
+@app.get("/api/test-pay")
+def test_pay(analysis_id: str, payment_id: str):
+    if not PAYMENT_TEST_MODE:
+        raise HTTPException(404, "Тестовая оплата отключена.")
+    item = get_analysis_or_404(analysis_id)
+    if item.get("payment_id") != payment_id:
+        raise HTTPException(400, "Некорректный тестовый платёж.")
+    item["paid"] = True
+    return RedirectResponse(url=f"/?analysis={analysis_id}&paid=1", status_code=302)
+
+
+@app.get("/api/payment-status")
+def payment_status(analysis_id: str):
+    item = get_analysis_or_404(analysis_id)
+    if item.get("paid"):
+        return {"status": "succeeded", "paid": True}
+
+    payment_id = item.get("payment_id")
+    if not payment_id:
+        return {"status": "not_created", "paid": False}
+
+    if PAYMENT_TEST_MODE and str(payment_id).startswith("test_"):
+        return {"status": "pending", "paid": False}
+
+    payment = yookassa_request("GET", f"/payments/{payment_id}")
+    succeeded = payment.get("status") == "succeeded" and bool(payment.get("paid"))
+    if succeeded:
+        item["paid"] = True
+    return {"status": payment.get("status"), "paid": succeeded}
+
+
+@app.get("/api/report/{analysis_id}")
+def paid_report(analysis_id: str):
+    item = get_analysis_or_404(analysis_id)
+    if not item.get("paid"):
+        raise HTTPException(402, "Сначала оплатите полный отчёт.")
+    return JSONResponse(item["result"])
 
 
 class RecalcPayload(BaseModel):
@@ -427,17 +585,26 @@ h1{font-size:64px;line-height:.96;letter-spacing:-.06em;margin:0;max-width:720px
 .previewStep{background:#191917;border:1px solid #282825;border-radius:11px;padding:12px;font-size:11px;color:#bcbcb6;line-height:1.4}
 .previewStep b{display:block;color:#fff;font-size:12px;margin-bottom:4px}
 
-.uploaderCard{margin-top:22px;background:#fff;border:1px solid var(--line);border-radius:15px;padding:22px}
+.uploaderCard{margin-top:26px;background:#fff;border:1px solid var(--line);border-radius:18px;padding:26px}
 .uploaderHead{display:flex;justify-content:space-between;gap:20px;align-items:flex-start;margin-bottom:15px}
 .uploaderHead h2{font-size:21px;letter-spacing:-.03em;margin:0 0 5px}
 .uploaderHead p{margin:0;color:var(--muted);font-size:11px;line-height:1.5;max-width:650px}
 .formatPills{display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end}
 .formatPill{border:1px solid var(--line);background:#fafaf7;border-radius:999px;padding:5px 7px;color:var(--muted);font-size:9px;font-weight:800}
-.upload{border:1px dashed #c9c9c1;border-radius:12px;background:#fafaf7;padding:28px 20px;text-align:center;cursor:pointer;transition:.16s ease}
-.upload.drag{border-color:#111;background:#f6f6ef}
-.uploadIcon{width:34px;height:34px;margin:0 auto 9px;border:1px solid var(--line);background:#fff;border-radius:9px;display:grid;place-items:center;font-size:18px}
-.uploadTitle{font-weight:780;font-size:14px}
-.uploadSub{color:var(--muted);font-size:10px;margin-top:4px}
+.upload{
+  border:1px solid var(--line);border-radius:14px;background:#fafaf7;padding:18px;
+  cursor:pointer;transition:.16s ease;display:flex;align-items:center;justify-content:space-between;gap:16px;text-align:left
+}
+.upload:hover,.upload.drag{border-color:#b9b9b0;background:#f7f7f2}
+.upload.selected{border-color:#b9b9b0;background:#fff}
+.uploadLeft{display:flex;align-items:center;gap:13px;min-width:0}
+.uploadIcon{width:42px;height:42px;flex:0 0 42px;border:1px solid var(--line);background:#fff;border-radius:11px;display:grid;place-items:center;font-size:18px}
+.uploadMeta{min-width:0}
+.uploadTitle{font-weight:780;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:560px}
+.uploadSub{color:var(--muted);font-size:10px;margin-top:3px}
+.uploadPick{flex:0 0 auto;background:#111;color:#fff;border-radius:9px;padding:9px 11px;font-size:10px;font-weight:800}
+.upload.selected .uploadPick{background:#f1f1ed;color:#333}
+
 input[type=file]{display:none}
 .uploadBottom{display:flex;align-items:center;gap:11px;margin-top:13px}
 .parser{font-size:10px;color:var(--muted)}
@@ -449,6 +616,28 @@ input[type=file]{display:none}
 @keyframes scan{from{transform:translateX(-110%)}to{transform:translateX(360%)}}
 #error{display:none;margin-top:12px;background:#fff1ef;border:1px solid #f0d5d1;color:var(--red);padding:10px 11px;border-radius:9px;font-size:11px}
 
+.summary{display:none;margin-top:24px}
+.summaryCard{background:#fff;border:1px solid var(--line);border-radius:18px;overflow:hidden}
+.summaryTop{padding:30px;border-bottom:1px solid var(--line)}
+.summaryBadge{display:inline-flex;align-items:center;gap:7px;color:var(--muted);font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.1em}
+.summaryBadge i{width:18px;height:18px;border-radius:50%;display:grid;place-items:center;background:var(--accent);color:#172000;font-style:normal}
+.summaryTitle{font-size:22px;letter-spacing:-.035em;margin:18px 0 4px}
+.summarySub{font-size:11px;color:var(--muted)}
+.summaryNumbers{display:grid;grid-template-columns:1fr 1fr;gap:0;margin-top:26px;border:1px solid var(--line);border-radius:13px;overflow:hidden}
+.summaryNumber{padding:20px}
+.summaryNumber+ .summaryNumber{border-left:1px solid var(--line)}
+.summaryNumber span{display:block;color:var(--muted);font-size:10px;margin-bottom:5px}
+.summaryNumber b{font-size:34px;letter-spacing:-.045em}
+.paywall{padding:24px 30px;display:grid;grid-template-columns:1fr auto;gap:24px;align-items:center;background:#111;color:#fff}
+.paywallLabel{color:#a6a6a0;font-size:9px;text-transform:uppercase;letter-spacing:.09em;font-weight:800}
+.paywallTitle{font-size:20px;font-weight:800;letter-spacing:-.03em;margin-top:5px}
+.paywallText{color:#a9a9a3;font-size:10px;line-height:1.5;margin-top:6px;max-width:630px}
+.paywallPrice{display:flex;align-items:center;gap:13px}
+.price{font-size:28px;font-weight:820;letter-spacing:-.04em;white-space:nowrap}
+.payBtn{background:var(--accent);color:var(--accentInk);border:0;border-radius:10px;padding:12px 16px;font-weight:820;cursor:pointer;white-space:nowrap}
+.paySecure{font-size:9px;color:#8e8e89;margin-top:7px;text-align:right}
+.paymentStatus{display:none;margin-top:12px;padding:10px 11px;border-radius:9px;background:#f6f6f1;color:var(--muted);font-size:10px}
+.unlockBadge{display:inline-flex;align-items:center;gap:7px;color:var(--green);font-size:10px;font-weight:800;margin-bottom:12px}
 #results{display:none;margin-top:24px}
 .resultShell{background:#fff;border:1px solid var(--line);border-radius:16px;overflow:hidden}
 .resultTop{padding:30px;border-bottom:1px solid var(--line)}
@@ -539,6 +728,13 @@ th{color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.06e
   .qrow{grid-template-columns:1fr}
   .uploaderHead{flex-direction:column}
   .formatPills{justify-content:flex-start}
+  .upload{align-items:flex-start}
+  .uploadPick{display:none}
+  .summaryNumbers{grid-template-columns:1fr}
+  .summaryNumber+ .summaryNumber{border-left:0;border-top:1px solid var(--line)}
+  .paywall{grid-template-columns:1fr}
+  .paywallPrice{justify-content:space-between}
+  .paySecure{text-align:left}
   .packetRow{align-items:flex-start;flex-direction:column}
   .sectionTitleRow{align-items:flex-start;flex-direction:column}
 }
@@ -547,8 +743,8 @@ th{color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.06e
 <body>
 <div class="wrap">
   <header class="header">
-    <div class="brand"><span class="brandMark">₽</span>Tax Radar <span class="beta">CLOUD 1.3.1</span></div>
-    <div class="secure"><span class="secureDot"></span>Файл обрабатывается локально</div>
+    <div class="brand"><span class="brandMark">₽</span>Tax Radar <span class="beta">PAID 1.4</span></div>
+    <div class="secure"><span class="secureDot"></span>Файл не сохраняется после анализа</div>
   </header>
 
   <section class="hero">
@@ -562,7 +758,7 @@ th{color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.06e
       </div>
     </div>
     <div class="preview">
-      <div class="previewTop"><span>Результат</span><span class="previewPill">CLOUD 1.3.1</span></div>
+      <div class="previewTop"><span>Результат</span><span class="previewPill">PAID 1.4</span></div>
       <div class="previewLabel">Можно вернуть</div>
       <div class="previewMoney">от 20 208 ₽</div>
       <div class="previewFast"><i>✓</i>15 078 ₽ — за 2 простых действия</div>
@@ -580,13 +776,18 @@ th{color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.06e
     </div>
     <label class="upload" id="drop">
       <input id="file" type="file" accept=".pdf,.csv,.xlsx,.xlsm"/>
-      <div class="uploadIcon">⇧</div>
-      <div class="uploadTitle" id="fname">Перетащите выписку сюда</div>
-      <div class="uploadSub">или нажмите, чтобы выбрать файл</div>
+      <div class="uploadLeft">
+        <div class="uploadIcon">↥</div>
+        <div class="uploadMeta">
+          <div class="uploadTitle" id="fname">Выберите банковскую выписку</div>
+          <div class="uploadSub" id="fileSub">PDF, CSV или XLSX · до 30 МБ</div>
+        </div>
+      </div>
+      <span class="uploadPick" id="uploadPick">Выбрать файл</span>
     </label>
     <div class="uploadBottom">
       <button class="btn btnBrand" id="analyze" disabled>Найти вычеты</button>
-      <span class="parser" id="parserHint">Файл никуда не загружается в облако</span>
+      <span class="parser" id="parserHint">Файл передаётся по HTTPS и не сохраняется приложением</span>
     </div>
     <div class="loader" id="loader">
       <div class="loaderTop"><b>Анализируем операции</b><span>ищем медицину, фитнес, обучение, страхование…</span></div>
@@ -595,10 +796,37 @@ th{color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.06e
     <div id="error"></div>
   </section>
 
+  <section class="summary" id="summary">
+    <div class="summaryCard">
+      <div class="summaryTop">
+        <div class="summaryBadge"><i>✓</i>Анализ готов</div>
+        <div class="summaryTitle">Мы нашли деньги, которые потенциально можно вернуть</div>
+        <div class="summarySub">До оплаты показываем только итог анализа — детали остаются закрыты.</div>
+        <div class="summaryNumbers">
+          <div class="summaryNumber"><span>Нашли подходящих расходов</span><b id="summaryExpenses">—</b></div>
+          <div class="summaryNumber"><span>Потенциальный возврат</span><b id="summaryRefund">—</b></div>
+        </div>
+        <div class="paymentStatus" id="paymentStatus"></div>
+      </div>
+      <div class="paywall">
+        <div>
+          <div class="paywallLabel">Полный персональный отчёт</div>
+          <div class="paywallTitle">Что именно нашли и как вернуть деньги</div>
+          <div class="paywallText">Откроем операции и категории, сгруппируем организации, подготовим готовые запросы и покажем короткий план действий.</div>
+        </div>
+        <div>
+          <div class="paywallPrice"><div class="price">499 ₽</div><button class="payBtn" id="payBtn">Получить отчёт</button></div>
+          <div class="paySecure">Разовая оплата · ЮKassa</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <section id="results">
     <div class="resultShell">
       <div class="resultTop">
-        <div class="resultBadge"><i>✓</i>Анализ готов</div>
+        <div class="unlockBadge">✓ Полный отчёт оплачен и открыт</div>
+        <div class="resultBadge"><i>✓</i>Ваш результат</div>
         <div class="resultGrid">
           <div>
             <div class="resultLabel">Потенциальный возврат</div>
@@ -654,13 +882,22 @@ th{color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.06e
 </div>
 <div class="toast" id="toast"></div>
 <script>
-let chosenFile=null,result=null;
+let chosenFile=null,result=null,analysisId=null;
 const file=document.getElementById('file'),drop=document.getElementById('drop'),analyze=document.getElementById('analyze');
 file.onchange=()=>setFile(file.files[0]);
 ['dragover','dragenter'].forEach(e=>drop.addEventListener(e,x=>{x.preventDefault();drop.classList.add('drag')}));
 ['dragleave','drop'].forEach(e=>drop.addEventListener(e,x=>{x.preventDefault();drop.classList.remove('drag')}));
 drop.addEventListener('drop',e=>{if(e.dataTransfer.files[0])setFile(e.dataTransfer.files[0])});
-function setFile(f){if(!f)return;chosenFile=f;document.getElementById('fname').textContent='✓ '+f.name;analyze.disabled=false;document.getElementById('parserHint').textContent=f.name.toLowerCase().endsWith('.pdf')?'PDF будет разобран локальным backend-сервисом':'Таблица будет разобрана локальным backend-сервисом'}
+function setFile(f){
+  if(!f)return;
+  chosenFile=f;
+  drop.classList.add('selected');
+  document.getElementById('fname').textContent=f.name;
+  document.getElementById('fileSub').textContent=(f.size/1024/1024).toFixed(1)+' МБ · готово к анализу';
+  document.getElementById('uploadPick').textContent='Заменить';
+  analyze.disabled=false;
+  document.getElementById('parserHint').textContent='После анализа исходный файл не сохраняется';
+}
 const rub=n=>new Intl.NumberFormat('ru-RU',{maximumFractionDigits:0}).format(n)+' ₽';
 function escapeHtml(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
 function ids(){return [...document.querySelectorAll('input[data-id]:checked')].map(x=>x.dataset.id)}
@@ -671,12 +908,98 @@ function toast(s){const e=document.getElementById('toast');e.textContent=s;e.sty
 function copyText(s){navigator.clipboard?.writeText(s).then(()=>toast('Готовый запрос скопирован')).catch(()=>toast('Скопируйте текст вручную'))}
 
 analyze.onclick=async()=>{
-  document.getElementById('error').style.display='none';document.getElementById('loader').style.display='block';analyze.disabled=true;
+  document.getElementById('error').style.display='none';
+  document.getElementById('loader').style.display='block';
+  analyze.disabled=true;
   const fd=new FormData();fd.append('file',chosenFile);
-  try{const r=await fetch('/api/analyze',{method:'POST',body:fd});const data=await r.json();if(!r.ok)throw new Error(data.detail||'Ошибка анализа');result=data;render()}
-  catch(e){const er=document.getElementById('error');er.textContent=e.message;er.style.display='block'}
-  finally{document.getElementById('loader').style.display='none';analyze.disabled=false}
+  try{
+    const r=await fetch('/api/analyze',{method:'POST',body:fd});
+    const data=await r.json();
+    if(!r.ok)throw new Error(data.detail||'Ошибка анализа');
+    analysisId=data.analysis_id;
+    localStorage.setItem('taxRadarAnalysisId',analysisId);
+    showSummary(data);
+  }catch(e){
+    const er=document.getElementById('error');er.textContent=e.message;er.style.display='block'
+  }finally{
+    document.getElementById('loader').style.display='none';analyze.disabled=false
+  }
 };
+
+
+function showSummary(data){
+  document.getElementById('results').style.display='none';
+  document.getElementById('summary').style.display='block';
+  document.getElementById('summaryExpenses').textContent=rub(data.expenses_found);
+  document.getElementById('summaryRefund').textContent='от '+rub(data.refund_from);
+  document.getElementById('summary').scrollIntoView({behavior:'smooth',block:'start'});
+}
+
+async function buyReport(){
+  if(!analysisId)return;
+  const btn=document.getElementById('payBtn');
+  const status=document.getElementById('paymentStatus');
+  btn.disabled=true;btn.textContent='Открываем оплату…';
+  status.style.display='none';
+  try{
+    const r=await fetch('/api/create-payment',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({analysis_id:analysisId})
+    });
+    const d=await r.json();
+    if(!r.ok)throw new Error(d.detail||'Не удалось создать оплату');
+    if(d.status==='succeeded'){await unlockReport();return}
+    window.location.href=d.confirmation_url;
+  }catch(e){
+    status.textContent=e.message;
+    status.style.display='block';
+    btn.disabled=false;btn.textContent='Получить отчёт';
+  }
+}
+document.getElementById('payBtn').onclick=buyReport;
+
+async function unlockReport(){
+  if(!analysisId)return;
+  const status=document.getElementById('paymentStatus');
+  status.style.display='block';status.textContent='Проверяем оплату…';
+  try{
+    const sr=await fetch('/api/payment-status?analysis_id='+encodeURIComponent(analysisId));
+    const sd=await sr.json();
+    if(!sr.ok)throw new Error(sd.detail||'Не удалось проверить оплату');
+    if(!sd.paid){
+      status.textContent=sd.status==='pending'?'Платёж ещё обрабатывается. Обновим статус через несколько секунд.':'Оплата не подтверждена.';
+      if(sd.status==='pending')setTimeout(unlockReport,2500);
+      return;
+    }
+    const rr=await fetch('/api/report/'+encodeURIComponent(analysisId));
+    const report=await rr.json();
+    if(!rr.ok)throw new Error(report.detail||'Не удалось открыть отчёт');
+    result=report;
+    document.getElementById('summary').style.display='none';
+    render();
+    const url=new URL(window.location.href);
+    url.searchParams.delete('payment');url.searchParams.delete('paid');
+    url.searchParams.set('analysis',analysisId);
+    history.replaceState({},'',url);
+  }catch(e){
+    status.textContent=e.message;
+  }
+}
+
+async function resumeAfterPayment(){
+  const params=new URLSearchParams(window.location.search);
+  const fromUrl=params.get('analysis');
+  analysisId=fromUrl||localStorage.getItem('taxRadarAnalysisId');
+  if(!analysisId)return;
+  if(params.get('payment')==='return'||params.get('paid')==='1'){
+    document.getElementById('summary').style.display='block';
+    document.getElementById('summaryExpenses').textContent='—';
+    document.getElementById('summaryRefund').textContent='—';
+    await unlockReport();
+  }
+}
+window.addEventListener('DOMContentLoaded',resumeAfterPayment);
 
 function buildBatch(items){
   const by={};items.forEach(c=>{const k=c.category+'||'+c.merchant;(by[k]??=[]).push(c)});let html='';

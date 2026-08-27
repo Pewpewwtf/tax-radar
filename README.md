@@ -1,12 +1,10 @@
-# Tax Radar CLOUD 1.3
+# Tax Radar PAID 1.4
 
-Заголовок: **«Найдём ваш налоговый вычет за 5 минут.»**
+Воронка:
+1. загрузка выписки;
+2. анализ;
+3. показываем только найденную сумму расходов и потенциальный возврат;
+4. полный отчёт — 499 ₽;
+5. после подтверждённой оплаты открываются операции, категории, рекомендации и пакет.
 
-- `main.py` — FastAPI backend + frontend
-- `requirements.txt` — зависимости
-- `Dockerfile` — готов для Timeweb App Platform
-- `docker-compose.yml` — альтернативный Docker Compose деплой
-- `TIMEWEB_DEPLOY.md` — пошаговая инструкция
-- `/health` — healthcheck
-
-Локальный запуск по-прежнему доступен через `START_MAC.command`.
+См. `TIMEWEB_PAYMENT_SETUP.md`.
