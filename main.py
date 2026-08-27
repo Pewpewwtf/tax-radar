@@ -21,7 +21,7 @@ from fastapi import FastAPI, File, UploadFile, HTTPException, Request, Form
 from fastapi.responses import HTMLResponse, JSONResponse, Response, RedirectResponse
 from pydantic import BaseModel
 
-app = FastAPI(title="СделатьВычет", version="2.1.1")
+app = FastAPI(title="СделатьВычет", version="2.2.0")
 
 
 REPORT_PRICE_RUB = 499
@@ -1234,7 +1234,7 @@ def legal_status():
 
 @app.get("/health")
 def health():
-    return {"ok": True, "version": "2.1.1", "legal_ready": legal_ready(), "service": "СделатьВычет"}
+    return {"ok": True, "version": "2.2.0", "legal_ready": legal_ready(), "service": "СделатьВычет"}
 
 
 @app.post("/api/analyze")
@@ -1632,6 +1632,32 @@ input[type=file]{display:none}
 .legalRow a{color:#111;text-decoration:underline;text-underline-offset:2px}
 .legalMini{font-size:8px;color:#96968f;line-height:1.5;margin-top:1px}
 .pill{display:inline-flex;align-items:center;padding:7px 10px;border:1px solid var(--line);border-radius:999px;background:#fff;font-size:8px;color:#666;font-weight:800;text-transform:uppercase;letter-spacing:.06em}
+.proofStrip{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:18px 0 20px}
+.proofCard{display:flex;gap:12px;align-items:flex-start;background:#fff;border:1px solid var(--line);border-radius:16px;padding:16px}
+.proofNum{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;background:#111;color:#fff;font-size:12px;font-weight:800;flex:0 0 auto}
+.proofCard b{display:block;font-size:12px;letter-spacing:-.02em}
+.proofCard span{display:block;margin-top:4px;font-size:10px;color:var(--muted);line-height:1.5}
+.featureGrid{display:grid;grid-template-columns:1.2fr .9fr .9fr;gap:12px;margin:0 0 20px}
+.featureCard{background:#fff;border:1px solid var(--line);border-radius:18px;padding:18px}
+.featureDark{background:#111;color:#fff;border-color:#111}
+.featureDark .featureKicker,.featureDark p{color:#b0b0aa}
+.featureCard h3{margin:8px 0 8px;font-size:23px;letter-spacing:-.04em;line-height:1.03}
+.featureCard p{margin:0;font-size:10px;color:var(--muted);line-height:1.6}
+.featureKicker{font-size:9px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:800}
+.featureList{margin:10px 0 0;padding:0;list-style:none;display:grid;gap:9px}
+.featureList li{font-size:10px;line-height:1.5;display:flex;gap:8px;align-items:flex-start}
+.featureList li:before{content:"✓";display:inline-grid;place-items:center;width:16px;height:16px;border-radius:50%;background:#eef8d1;color:#243700;font-size:10px;font-weight:900;flex:0 0 auto}
+.successBanner{display:none;margin:0 0 14px;padding:16px 18px;border-radius:14px;background:#efffcb;color:#334a00;border:1px solid #d9f0a2}
+.successBanner.show{display:block}
+.successBanner b{display:block;font-size:13px;letter-spacing:-.02em}
+.successBanner p{margin:5px 0 0;font-size:10px;line-height:1.55}
+.metricTiles{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:18px}
+.metricTile{padding:16px;border:1px solid var(--line);border-radius:13px;background:#fafaf7}
+.metricTile .label{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;font-weight:800}
+.metricTile .value{margin-top:7px;font-size:24px;letter-spacing:-.04em;font-weight:820}
+.metricTile .meta{margin-top:4px;color:var(--muted);font-size:9px;line-height:1.5}
+@media(max-width:900px){.proofStrip,.featureGrid,.metricTiles{grid-template-columns:1fr}}
+
 .legalFooter{margin-top:34px;padding:20px 0;border-top:1px solid var(--line);display:flex;gap:16px;flex-wrap:wrap;font-size:9px;color:#777}
 .legalFooter a{color:#555;text-decoration:none}.legalFooter a:hover{text-decoration:underline}
 
@@ -1852,22 +1878,22 @@ th{color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.06e
 <body>
 <div class="wrap">
   <header class="header">
-    <div class="brand"><span class="brandMark">₽</span>СделатьВычет <span class="beta">SDELATVYCHET 2.1.1</span></div>
+    <div class="brand"><span class="brandMark">₽</span>СделатьВычет <span class="beta">SDELATVYCHET 2.2.0</span></div>
     <div class="secure"><span class="secureDot"></span>Файл не сохраняется после анализа</div>
   </header>
 
   <section class="hero">
     <div class="heroCopy">
       <div class="eyebrow"><span class="eyebrowDot"></span>Персональный поиск налоговых вычетов</div>
-      <h1>Вернём деньги, которые вы могли не забрать у государства.</h1>
-      <p class="heroText">Загрузите банковскую выписку. Мы найдём потенциальные расходы для вычета, посчитаем консервативную сумму по 13% и сведём всё к нескольким понятным действиям.</p>
+      <h1>Найдём ваш налоговый вычет за 5 минут.</h1>
+      <p class="heroText">Загрузите банковскую выписку. СделатьВычет поможет найти расходы, которые могут дать налоговый вычет, оценит сумму возврата и сведёт всё к нескольким понятным действиям.</p>
       <div class="heroActions">
         <label for="file" class="btn btnPrimary">Загрузить выписку <span>→</span></label>
         <span class="heroHint">PDF • CSV • XLSX</span>
       </div>
     </div>
     <div class="preview">
-      <div class="previewTop"><span>Результат</span><span class="previewPill">SDELATVYCHET 2.1.1</span></div>
+      <div class="previewTop"><span>Результат</span><span class="previewPill">SDELATVYCHET 2.2.0</span></div>
       <div class="previewLabel">Можно вернуть</div>
       <div class="previewMoney">от 20 208 ₽</div>
       <div class="previewFast"><i>✓</i>15 078 ₽ — за 2 простых действия</div>
@@ -1875,6 +1901,45 @@ th{color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.06e
         <div class="previewStep"><b>1. Получить справки</b>Мы сами сгруппируем организации и подготовим запросы.</div>
         <div class="previewStep"><b>2. Ответить на вопросы</b>Уточнить только те операции, где без вас нельзя.</div>
       </div>
+    </div>
+  </section>
+
+  <section class="proofStrip">
+    <div class="proofCard">
+      <div class="proofNum">1</div>
+      <div><b>Загрузите выписку</b><span>PDF, CSV или XLSX. Поддерживаем крупнейшие банки РФ.</span></div>
+    </div>
+    <div class="proofCard">
+      <div class="proofNum">2</div>
+      <div><b>Бесплатно увидьте ориентир</b><span>Сначала покажем найденные расходы и оценку возможного вычета.</span></div>
+    </div>
+    <div class="proofCard">
+      <div class="proofNum">3</div>
+      <div><b>Откройте готовый план</b><span>После оплаты получите понятный отчёт, тексты запросов и маршрут до подачи.</span></div>
+    </div>
+  </section>
+
+  <section class="featureGrid">
+    <div class="featureCard featureDark">
+      <div class="featureKicker">Зачем это нужно</div>
+      <h3>Не нужно вручную перечитывать выписку и искать клиники, фитнес, обучение или страхование</h3>
+      <p>СделатьВычет сам находит потенциальные расходы, оценивает сумму и превращает хаос банковских операций в понятный план действий.</p>
+    </div>
+    <div class="featureCard">
+      <div class="featureKicker">До оплаты</div>
+      <ul class="featureList">
+        <li>сколько расходов нашли</li>
+        <li>от какой суммы возврата можно отталкиваться</li>
+        <li>стоит ли идти дальше</li>
+      </ul>
+    </div>
+    <div class="featureCard">
+      <div class="featureKicker">После оплаты</div>
+      <ul class="featureList">
+        <li>разбивка по операциям и категориям</li>
+        <li>организации и нужные документы</li>
+        <li>готовый маршрут до подачи вычета</li>
+      </ul>
     </div>
   </section>
 
@@ -1910,7 +1975,7 @@ th{color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.06e
     </div>
 
     <div class="uploadBottom">
-      <button class="btn btnBrand" id="analyze" disabled>Найти, где мои деньги</button>
+      <button class="btn btnBrand" id="analyze" disabled>Найти мой вычет</button>
       <span class="parser" id="parserHint">Файл передаётся по HTTPS и не сохраняется приложением</span>
     </div>
     <div class="loader" id="loader">
@@ -1924,7 +1989,7 @@ th{color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.06e
     <div class="summaryCard">
       <div class="summaryTop">
         <div class="summaryBadge"><i>✓</i>Анализ готов</div>
-        <div class="summaryTitle">Мы нашли расходы, которые можно превратить в возврат</div>
+        <div class="summaryTitle">Мы нашли расходы, которые могут дать вам вычет</div>
         <div class="summarySub">Сначала бесплатно покажем найденную сумму. После оплаты откроем детали и готовый план действий.</div>
         <div class="summaryNumbers">
           <div class="summaryNumber"><span>Нашли подходящих расходов</span><b id="summaryExpenses">—</b></div>
@@ -1947,6 +2012,10 @@ th{color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.06e
   </section>
 
   <section id="results">
+    <div class="successBanner" id="successBanner">
+      <b>Оплата прошла успешно — полный отчёт открыт</b>
+      <p>Теперь вы видите найденные операции, категории, организации и пошаговый план до подачи вычета.</p>
+    </div>
     <div class="resultShell">
       <div class="resultTop">
         <div class="unlockBadge">✓ Полный отчёт оплачен и открыт</div>
@@ -1956,6 +2025,11 @@ th{color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.06e
             <div class="resultLabel">Потенциальный возврат</div>
             <div class="refund" id="refund"><span class="from">от</span>—</div>
             <div class="resultMeta" id="resultMeta"></div>
+            <div class="metricTiles">
+              <div class="metricTile"><div class="label">Найдено расходов</div><div class="value" id="tileExpenses">—</div><div class="meta">Сумма операций, которые сервис отнёс к возможному вычету</div></div>
+              <div class="metricTile"><div class="label">Быстрый путь</div><div class="value" id="tileFast">—</div><div class="meta">Сколько можно вернуть по простому сценарию</div></div>
+              <div class="metricTile"><div class="label">Доп. потенциал</div><div class="value" id="tileExtra">—</div><div class="meta">Столько ещё может добавиться при доп. подтверждениях</div></div>
+            </div>
           </div>
           <div class="fastBox">
             <div class="fastLabel">Быстрый путь</div>
@@ -2057,6 +2131,8 @@ function escapeHtml(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':
 function ids(){return [...document.querySelectorAll('input[data-id]:checked')].map(x=>x.dataset.id)}
 function selected(){const set=new Set(ids());return result.candidates.filter(c=>set.has(c.id))}
 function uniq(items){const a=[];items.forEach(c=>{const m=(c.merchant||'').trim();if(m&&m!=='Не удалось определить'&&!a.includes(m))a.push(m)});return a}
+function totalCandidatesAmount(items){return (items||[]).reduce((s,x)=>s+(Number(x.amount)||0),0)}
+
 function subsetRefund(items){const by={};items.forEach(c=>(by[c.year]??=0,by[c.year]+=c.amount));return Object.values(by).reduce((s,v)=>s+Math.min(v,150000)*.13,0)}
 function toast(s){const e=document.getElementById('toast');e.textContent=s;e.style.display='block';setTimeout(()=>e.style.display='none',1800)}
 function copyText(s){navigator.clipboard?.writeText(s).then(()=>toast('Готовый запрос скопирован')).catch(()=>toast('Скопируйте текст вручную'))}
@@ -2134,9 +2210,10 @@ async function unlockReport(){
     const rr=await fetch('/api/report/'+encodeURIComponent(analysisId));
     const report=await rr.json();
     if(!rr.ok)throw new Error(report.detail||'Не удалось открыть отчёт');
-    result=report;
+    result=report; result.paid_unlocked=true;
     document.getElementById('summary').style.display='none';
     render();
+    const sb=document.getElementById('successBanner'); if(sb) sb.classList.add('show');
     const url=new URL(window.location.href);
     url.searchParams.delete('payment');url.searchParams.delete('paid');
     url.searchParams.set('analysis',analysisId);
@@ -2385,6 +2462,10 @@ document.getElementById('extraToggle').onclick=()=>{const b=document.getElementB
 function render(){
   document.getElementById('results').style.display='block';
   document.getElementById('resultMeta').textContent=`Найдено ${result.candidates_count} потенциальных операций на ${rub(result.candidates_amount)} из ${result.transactions_scanned.toLocaleString('ru-RU')} банковских операций.`;
+  document.getElementById('tileExpenses').textContent=rub(totalCandidatesAmount(result.candidates));
+  document.getElementById('tileFast').textContent='до '+rub((result?.breakdown?.easy_refund ?? 0));
+  document.getElementById('tileExtra').textContent='до '+rub(Math.max(0,(result?.potential_if_all_confirmed?.refund_from ?? 0)-(result?.breakdown?.easy_refund ?? 0)));
+
   document.getElementById('groups').innerHTML=result.groups.map(g=>`<span class="chip">${g.emoji} ${g.name}: ${g.count} · ${rub(g.amount)}</span>`).join('');
   document.getElementById('foundLabel').textContent=`${result.candidates_count} операций · ${rub(result.candidates_amount)}`;
   const byYear={};result.candidates.forEach(c=>(byYear[c.year]??=[]).push(c));let html='';
