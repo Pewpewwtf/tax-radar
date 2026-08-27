@@ -13,7 +13,7 @@ from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel
 
-app = FastAPI(title="Tax Radar", version="1.3.0")
+app = FastAPI(title="Tax Radar", version="1.3.1")
 
 CATEGORY_META = {
     "medicine": {"name": "Медицина", "emoji": "🏥", "confidence": "high", "note": "Похоже на оплату медицинских услуг. Для вычета потребуется подтверждение от медицинской организации."},
@@ -547,7 +547,7 @@ th{color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.06e
 <body>
 <div class="wrap">
   <header class="header">
-    <div class="brand"><span class="brandMark">₽</span>Tax Radar <span class="beta">CLOUD 1.3</span></div>
+    <div class="brand"><span class="brandMark">₽</span>Tax Radar <span class="beta">CLOUD 1.3.1</span></div>
     <div class="secure"><span class="secureDot"></span>Файл обрабатывается локально</div>
   </header>
 
@@ -562,7 +562,7 @@ th{color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.06e
       </div>
     </div>
     <div class="preview">
-      <div class="previewTop"><span>Результат</span><span class="previewPill">CLOUD 1.3</span></div>
+      <div class="previewTop"><span>Результат</span><span class="previewPill">CLOUD 1.3.1</span></div>
       <div class="previewLabel">Можно вернуть</div>
       <div class="previewMoney">от 20 208 ₽</div>
       <div class="previewFast"><i>✓</i>15 078 ₽ — за 2 простых действия</div>
