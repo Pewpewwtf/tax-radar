@@ -21,7 +21,7 @@ from fastapi import FastAPI, File, UploadFile, HTTPException, Request, Form
 from fastapi.responses import HTMLResponse, JSONResponse, Response, RedirectResponse
 from pydantic import BaseModel
 
-app = FastAPI(title="СделатьВычет", version="2.2.0")
+app = FastAPI(title="СделатьВычет", version="2.3.0")
 
 
 REPORT_PRICE_RUB = 499
@@ -1197,7 +1197,18 @@ def analyze_transactions(txs: list[dict[str, Any]]) -> dict[str, Any]:
         meta = CATEGORY_META[k]
         groups.append({"category": k, "name": meta["name"], "emoji": meta["emoji"], "count": v["count"], "amount": round(v["amount"], 2), "confidence": meta["confidence"]})
     groups.sort(key=lambda x: x["amount"], reverse=True)
-    return {"transactions_scanned": len(txs), "candidates_count": len(candidates), "candidates_amount": round(sum(c["amount"] for c in candidates), 2), "base": base, "potential_if_all_confirmed": all_potential, "groups": groups, "candidates": sorted(candidates, key=lambda x: (x["year"], x["date"], x["amount"]))}
+    fast_candidates = [c for c in candidates if c["category"] in {"medicine", "fitness", "education", "insurance"}]
+    fast_path = calculate_refund(fast_candidates, {c["id"] for c in fast_candidates})
+    return {
+        "transactions_scanned": len(txs),
+        "candidates_count": len(candidates),
+        "candidates_amount": round(sum(c["amount"] for c in candidates), 2),
+        "base": base,
+        "potential_if_all_confirmed": all_potential,
+        "fast_path": fast_path,
+        "groups": groups,
+        "candidates": sorted(candidates, key=lambda x: (x["year"], x["date"], x["amount"])),
+    }
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -1234,7 +1245,7 @@ def legal_status():
 
 @app.get("/health")
 def health():
-    return {"ok": True, "version": "2.2.0", "legal_ready": legal_ready(), "service": "СделатьВычет"}
+    return {"ok": True, "version": "2.3.0", "legal_ready": legal_ready(), "service": "СделатьВычет"}
 
 
 @app.post("/api/analyze")
@@ -1632,6 +1643,103 @@ input[type=file]{display:none}
 .legalRow a{color:#111;text-decoration:underline;text-underline-offset:2px}
 .legalMini{font-size:8px;color:#96968f;line-height:1.5;margin-top:1px}
 .pill{display:inline-flex;align-items:center;padding:7px 10px;border:1px solid var(--line);border-radius:999px;background:#fff;font-size:8px;color:#666;font-weight:800;text-transform:uppercase;letter-spacing:.06em}
+
+/* 2.3 polish */
+.brand{display:flex;align-items:center;gap:10px}
+.brandLogo{width:34px;height:34px;display:block;flex:0 0 auto}
+.brandName{font-weight:880;letter-spacing:-.045em;font-size:18px}
+.beta{padding:4px 6px;border-radius:999px;background:#ededE7;color:#7a7a73;font-size:7px;letter-spacing:.07em;text-transform:uppercase;font-weight:850}
+.hero{padding-top:26px}
+.hero h1{max-width:760px;text-wrap:balance}
+.heroText{max-width:650px}
+.preview{box-shadow:0 18px 60px rgba(0,0,0,.08)}
+.uploaderCard,.summaryCard,.resultShell{box-shadow:0 12px 45px rgba(0,0,0,.035)}
+.upload{transition:border-color .18s ease,background .18s ease,transform .18s ease}
+.upload:hover{border-color:#bbbcb4;background:#fdfdf9}
+.upload.selected{border-color:#a7c967;background:#fbfff4}
+.btnPrimary,.btnBrand,.payBtn{transition:transform .15s ease,opacity .15s ease,box-shadow .15s ease}
+.btnPrimary:hover,.btnBrand:hover,.payBtn:hover{transform:translateY(-1px);box-shadow:0 8px 24px rgba(0,0,0,.10)}
+.summaryNumber strong{letter-spacing:-.045em}
+.resultTop{background:linear-gradient(180deg,#fff 0%,#fdfdf9 100%)}
+.fastBox{border:1px solid #dfecc2;background:#f8ffe9}
+.metricTiles{grid-template-columns:repeat(3,minmax(0,1fr))}
+.metricTile{min-width:0}
+.metricTile .value{white-space:nowrap}
+.journey{box-shadow:0 10px 35px rgba(0,0,0,.035)}
+.guideStep{transition:background .15s ease}
+.guideStep:hover{background:#fdfdf9}
+.detailsCard{overflow:hidden}
+.legalConsent{background:#fbfbf7}
+
+.mobileSticky{display:none}
+
+@media(max-width:900px){
+  body{overflow-x:hidden}
+  .wrap{padding-left:16px!important;padding-right:16px!important}
+  header{padding-top:16px}
+  .secure{font-size:8px}
+  .brandName{font-size:16px}
+  .brandLogo{width:31px;height:31px}
+  .hero{grid-template-columns:1fr!important;gap:20px!important;padding-top:22px}
+  .hero h1{font-size:44px!important;line-height:.96!important}
+  .heroText{font-size:12px!important;line-height:1.6!important}
+  .heroActions{align-items:flex-start!important;flex-direction:column!important}
+  .preview{min-height:0!important}
+  .proofStrip,.featureGrid{grid-template-columns:1fr}
+  .featureCard h3{font-size:21px}
+  .uploaderHead{display:flex!important;flex-direction:column!important;align-items:flex-start!important;gap:12px!important}
+  .formatPills{margin-left:0!important}
+  .upload{padding:15px!important}
+  .uploadLeft{min-width:0}
+  .uploadMeta{min-width:0}
+  .uploadTitle{white-space:normal!important}
+  .uploadSub{white-space:normal!important;line-height:1.4}
+  .uploadPick{flex:0 0 auto}
+  .uploadBottom{flex-direction:column!important;align-items:stretch!important}
+  .uploadBottom .btn{width:100%}
+  .parser{text-align:center}
+  .summaryTop{padding:22px!important}
+  .summaryNumbers{grid-template-columns:1fr!important}
+  .summaryNumber+.summaryNumber{border-left:0!important;border-top:1px solid var(--line)}
+  .paywall{grid-template-columns:1fr!important;gap:18px!important}
+  .paywallPrice{justify-content:space-between}
+  .payBtn{min-height:46px}
+  .resultTop{padding:22px!important}
+  .resultGrid{grid-template-columns:1fr!important;gap:18px!important}
+  .refund{font-size:52px!important}
+  .metricTiles{grid-template-columns:1fr!important}
+  .resultBody{padding-left:18px!important;padding-right:18px!important}
+  .journeyHero{grid-template-columns:1fr!important}
+  .journeyMoney{text-align:left!important}
+  .sectionTitleRow{align-items:flex-start!important;flex-direction:column!important}
+  .actionCard{grid-template-columns:34px 1fr!important}
+  .actionMoney{grid-column:2;text-align:left!important}
+  .packetRow{align-items:flex-start!important;flex-direction:column!important}
+  .packetRow .btn{width:100%}
+  table{font-size:9px}
+  .detailsInner{overflow-x:auto}
+  .legalFooter{padding-bottom:84px!important}
+  .mobileSticky{
+    position:fixed;display:flex;left:12px;right:12px;bottom:12px;z-index:30;
+    align-items:center;justify-content:space-between;gap:12px;padding:11px 12px;
+    background:rgba(17,17,17,.94);backdrop-filter:blur(14px);
+    border:1px solid #333;border-radius:15px;box-shadow:0 12px 35px rgba(0,0,0,.25);
+    color:#fff
+  }
+  .mobileSticky span{font-size:9px;color:#aaa;display:block}
+  .mobileSticky b{font-size:12px}
+  .mobileSticky button{border:0;border-radius:9px;background:var(--accent);color:#172000;padding:10px 12px;font-size:9px;font-weight:850}
+}
+@media(max-width:520px){
+  .wrap{padding-top:0!important}
+  header{gap:8px}
+  .secure{max-width:130px;text-align:right;line-height:1.3}
+  .hero h1{font-size:38px!important}
+  .proofCard{padding:14px}
+  .featureCard{padding:16px}
+  .legalRow{font-size:9px}
+}
+
 .proofStrip{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:18px 0 20px}
 .proofCard{display:flex;gap:12px;align-items:flex-start;background:#fff;border:1px solid var(--line);border-radius:16px;padding:16px}
 .proofNum{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;background:#111;color:#fff;font-size:12px;font-weight:800;flex:0 0 auto}
@@ -1878,25 +1986,34 @@ th{color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.06e
 <body>
 <div class="wrap">
   <header class="header">
-    <div class="brand"><span class="brandMark">₽</span>СделатьВычет <span class="beta">SDELATVYCHET 2.2.0</span></div>
+    <div class="brand">
+    <svg class="brandLogo" viewBox="0 0 44 44" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <rect x="1" y="1" width="42" height="42" rx="13" fill="#B7FF2A"/>
+      <path d="M15 12.5h10l5 5v13.5H15z" fill="none" stroke="#172000" stroke-width="2.4" stroke-linejoin="round"/>
+      <path d="M25 12.5v5h5" fill="none" stroke="#172000" stroke-width="2.4" stroke-linejoin="round"/>
+      <path d="m18.5 25 3 3 6-7" fill="none" stroke="#172000" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    <span class="brandName">СделатьВычет</span>
+    <span class="beta">beta</span>
+  </div>
     <div class="secure"><span class="secureDot"></span>Файл не сохраняется после анализа</div>
   </header>
 
   <section class="hero">
     <div class="heroCopy">
-      <div class="eyebrow"><span class="eyebrowDot"></span>Персональный поиск налоговых вычетов</div>
+      <div class="eyebrow"><span class="eyebrowDot"></span>Поиск вычетов по банковской выписке</div>
       <h1>Найдём ваш налоговый вычет за 5 минут.</h1>
       <p class="heroText">Загрузите банковскую выписку. СделатьВычет поможет найти расходы, которые могут дать налоговый вычет, оценит сумму возврата и сведёт всё к нескольким понятным действиям.</p>
       <div class="heroActions">
         <label for="file" class="btn btnPrimary">Загрузить выписку <span>→</span></label>
-        <span class="heroHint">PDF • CSV • XLSX</span>
+        <span class="heroHint">Бесплатный поиск → детали за 499 ₽</span>
       </div>
     </div>
     <div class="preview">
-      <div class="previewTop"><span>Результат</span><span class="previewPill">SDELATVYCHET 2.2.0</span></div>
-      <div class="previewLabel">Можно вернуть</div>
+      <div class="previewTop"><span>Результат</span><span class="previewPill">SDELATVYCHET 2.3.0</span></div>
+      <div class="previewLabel">Потенциальный вычет</div>
       <div class="previewMoney">от 20 208 ₽</div>
-      <div class="previewFast"><i>✓</i>15 078 ₽ — за 2 простых действия</div>
+      <div class="previewFast"><i>✓</i>Сразу покажем, где искать вычет</div>
       <div class="previewSteps">
         <div class="previewStep"><b>1. Получить справки</b>Мы сами сгруппируем организации и подготовим запросы.</div>
         <div class="previewStep"><b>2. Ответить на вопросы</b>Уточнить только те операции, где без вас нельзя.</div>
@@ -1945,7 +2062,7 @@ th{color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.06e
 
   <section class="uploaderCard">
     <div class="uploaderHead">
-      <div><h2>Проверить выписку</h2><p>Сейчас лучше всего поддерживается PDF Альфа-Банка. Для таблиц нужны дата, описание операции и сумма.</p></div>
+      <div><h2>Проверить выписку</h2><p>PDF крупнейших банков распознаются автоматически. Для CSV/XLSX нужны дата, описание операции и сумма.</p></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 0"><span class="pill">До оплаты — бесплатно</span><span class="pill">Отчёт за 499 ₽</span><span class="pill">Данные не сохраняются как файл</span></div><div class="formatPills"><span class="formatPill">PDF</span><span class="formatPill">CSV</span><span class="formatPill">XLSX</span></div>
     </div>
     <label class="upload" id="drop">
@@ -2104,6 +2221,10 @@ th{color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.06e
     <a href="mailto:inbox@sdelatvychet.ru">inbox@sdelatvychet.ru</a>
   </footer>
 </div>
+<div class="mobileSticky" id="mobileSticky">
+  <div><span>СделатьВычет</span><b id="stickyText">Проверить выписку</b></div>
+  <button id="stickyBtn" type="button">Начать →</button>
+</div>
 <div class="toast" id="toast"></div>
 <script>
 let chosenFile=null,result=null,analysisId=null;
@@ -2132,6 +2253,13 @@ function ids(){return [...document.querySelectorAll('input[data-id]:checked')].m
 function selected(){const set=new Set(ids());return result.candidates.filter(c=>set.has(c.id))}
 function uniq(items){const a=[];items.forEach(c=>{const m=(c.merchant||'').trim();if(m&&m!=='Не удалось определить'&&!a.includes(m))a.push(m)});return a}
 function totalCandidatesAmount(items){return (items||[]).reduce((s,x)=>s+(Number(x.amount)||0),0)}
+
+function fastPathItems(items){
+  return (items||[]).filter(c=>['medicine','fitness','education','insurance'].includes(c.category));
+}
+function fastPathRefund(items){
+  return subsetRefund(fastPathItems(items));
+}
 
 function subsetRefund(items){const by={};items.forEach(c=>(by[c.year]??=0,by[c.year]+=c.amount));return Object.values(by).reduce((s,v)=>s+Math.min(v,150000)*.13,0)}
 function toast(s){const e=document.getElementById('toast');e.textContent=s;e.style.display='block';setTimeout(()=>e.style.display='none',1800)}
@@ -2162,11 +2290,21 @@ analyze.onclick=async()=>{
 };
 
 
+function updateSticky(mode){
+  const text=document.getElementById('stickyText'),btn=document.getElementById('stickyBtn');
+  if(!text||!btn)return;
+  if(mode==='summary'){text.textContent='Отчёт доступен за 499 ₽';btn.textContent='Открыть →';btn.onclick=()=>document.getElementById('summary').scrollIntoView({behavior:'smooth'});}
+  else if(mode==='report'){text.textContent='Ваш план готов';btn.textContent='К плану →';btn.onclick=()=>document.getElementById('journey').scrollIntoView({behavior:'smooth'});}
+  else{text.textContent='Проверить выписку';btn.textContent='Начать →';btn.onclick=()=>document.querySelector('.uploaderCard').scrollIntoView({behavior:'smooth'});}
+}
+updateSticky('start');
+
 function showSummary(data){
   document.getElementById('results').style.display='none';
   document.getElementById('summary').style.display='block';
   document.getElementById('summaryExpenses').textContent=rub(data.expenses_found);
   document.getElementById('summaryRefund').textContent='от '+rub(data.refund_from);
+  updateSticky('summary');
   document.getElementById('summary').scrollIntoView({behavior:'smooth',block:'start'});
 }
 
@@ -2446,10 +2584,13 @@ function buildBatch(items){
 
 function renderActions(){
   const s=selected(),easy=s.filter(c=>['medicine','fitness','education'].includes(c.category)),questions=s.filter(c=>c.category==='insurance'),extras=s.filter(c=>['pharmacy','donation'].includes(c.category));
-  const fast=[...easy,...questions],total=subsetRefund(s),fastR=subsetRefund(fast),extra=Math.max(0,total-fastR);let count=0,html='';
+  const fast=[...easy,...questions],total=subsetRefund(s),fastR=fastPathRefund(s),extra=Math.max(0,total-fastR);let count=0,html='';
   if(easy.length){count++;const merchants=uniq(easy),easyR=subsetRefund(easy);html+=`<div class="actionCard"><div class="actionNo">${count}</div><div><div class="actionName">Получить справки одним пакетом</div><div class="actionDesc">${merchants.length} организаций, ${easy.length} найденных оплат. СделатьВычет уже сгруппировал, кому и что запросить.</div><button class="actionBtn" onclick="toggleBatch()">Подготовить все запросы</button><div class="batch" id="batch">${buildBatch(easy)}</div></div><div class="actionMoney">от ${rub(easyR)}</div></div>`}
   if(questions.length){count++;const merchants=uniq(questions),qR=subsetRefund(questions);let qhtml='';merchants.forEach(m=>{const related=questions.filter(c=>c.merchant===m);qhtml+=`<div class="qrow"><b>${escapeHtml(m)}</b><select onchange='insuranceAnswer(this,${JSON.stringify(related.map(x=>x.id))})'><option value="">Что это за страховка?</option><option value="keep">Жизнь / ДМС / подходящий договор</option><option value="drop">ОСАГО / каско / другое</option></select></div>`});html+=`<div class="actionCard"><div class="actionNo">${count}</div><div><div class="actionName">Ответить на ${merchants.length} коротких вопрос${merchants.length===1?'':'а'}</div><div class="actionDesc">Не нужно разбираться в договорах заранее — просто укажите тип найденной страховки.</div><button class="actionBtn" onclick="toggleQuestions()">Ответить</button><div class="questionBox" id="questionBox">${qhtml}</div></div><div class="actionMoney">до ${rub(qR)}</div></div>`}
   document.getElementById('actions').innerHTML=html||'<div class="actionCard"><div class="actionNo">✓</div><div><div class="actionName">Основной план уже готов</div><div class="actionDesc">Осталось проверить дополнительные расходы или скачать пакет.</div></div></div>';
+  document.getElementById('tileExpenses').textContent=rub(totalCandidatesAmount(s));
+  document.getElementById('tileFast').textContent='до '+rub(fastR);
+  document.getElementById('tileExtra').textContent='до '+rub(extra);
   document.getElementById('refund').innerHTML='<span class="from">от</span>'+rub(total);document.getElementById('fastRefund').textContent='от '+rub(fastR);document.getElementById('fastText').textContent=count?`${fastR?Math.round(fastR/Math.max(total,1)*100):0}% найденного возврата — за ${count} ${count===1?'действие':'действия'}.`:'Сначала проверьте найденные операции.';document.getElementById('actionLead').textContent=count?`Вместо ${s.length} отдельных операций — всего ${count} ${count===1?'действие':'действия'}.`:'Сложные расходы вынесены отдельно.';
   const ex=document.getElementById('extra');if(extras.length){ex.style.display='block';document.getElementById('extraMoney').textContent='Ещё до '+rub(extra);const cats=[...new Set(extras.map(c=>c.category_name))];document.getElementById('extraText').textContent=`${cats.join(', ')} — ${extras.length} операций. Здесь нужно больше ручных подтверждений, поэтому они не мешают основному сценарию.`;document.getElementById('extraBody').innerHTML=extras.map(c=>`<div class="batchItem"><b>${c.emoji} ${escapeHtml(c.merchant)} · ${rub(c.amount)}</b>${c.date} · ${escapeHtml(c.note)}</div>`).join('')}else ex.style.display='none';
   renderJourney();
@@ -2462,10 +2603,6 @@ document.getElementById('extraToggle').onclick=()=>{const b=document.getElementB
 function render(){
   document.getElementById('results').style.display='block';
   document.getElementById('resultMeta').textContent=`Найдено ${result.candidates_count} потенциальных операций на ${rub(result.candidates_amount)} из ${result.transactions_scanned.toLocaleString('ru-RU')} банковских операций.`;
-  document.getElementById('tileExpenses').textContent=rub(totalCandidatesAmount(result.candidates));
-  document.getElementById('tileFast').textContent='до '+rub((result?.breakdown?.easy_refund ?? 0));
-  document.getElementById('tileExtra').textContent='до '+rub(Math.max(0,(result?.potential_if_all_confirmed?.refund_from ?? 0)-(result?.breakdown?.easy_refund ?? 0)));
-
   document.getElementById('groups').innerHTML=result.groups.map(g=>`<span class="chip">${g.emoji} ${g.name}: ${g.count} · ${rub(g.amount)}</span>`).join('');
   document.getElementById('foundLabel').textContent=`${result.candidates_count} операций · ${rub(result.candidates_amount)}`;
   const byYear={};result.candidates.forEach(c=>(byYear[c.year]??=[]).push(c));let html='';
