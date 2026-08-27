@@ -22,7 +22,7 @@ from fastapi import FastAPI, File, UploadFile, HTTPException, Request, Form
 from fastapi.responses import HTMLResponse, JSONResponse, Response, RedirectResponse
 from pydantic import BaseModel
 
-app = FastAPI(title="СделатьВычет", version="2.4.1")
+app = FastAPI(title="СделатьВычет", version="2.4.2")
 
 
 REPORT_PRICE_RUB = 499
@@ -116,6 +116,18 @@ def init_analytics_db():
             con.execute("CREATE INDEX IF NOT EXISTS idx_analytics_event_time ON analytics_events(event, created_at)")
             con.execute("CREATE INDEX IF NOT EXISTS idx_analytics_session ON analytics_events(session_id)")
             con.execute("CREATE INDEX IF NOT EXISTS idx_analytics_source ON analytics_events(utm_source)")
+            con.execute("""
+                CREATE TABLE IF NOT EXISTS public_stats (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    total_found_refund REAL NOT NULL DEFAULT 0,
+                    analyses_count INTEGER NOT NULL DEFAULT 0,
+                    updated_at TEXT
+                )
+            """)
+            con.execute("""
+                INSERT OR IGNORE INTO public_stats (id, total_found_refund, analyses_count, updated_at)
+                VALUES (1, 0, 0, ?)
+            """, (datetime.utcnow().replace(microsecond=0).isoformat() + "Z",))
             con.commit()
     except Exception:
         # Analytics must never prevent the tax service itself from working.
@@ -1416,6 +1428,40 @@ def legal_status():
 
 
 
+
+def increment_public_found_refund(value: float) -> None:
+    # Only the aggregate total is persisted; no merchant or transaction-level data.
+    amount = max(0.0, float(value or 0))
+    try:
+        with _analytics_connect() as con:
+            con.execute("""
+                UPDATE public_stats
+                SET total_found_refund = total_found_refund + ?,
+                    analyses_count = analyses_count + 1,
+                    updated_at = ?
+                WHERE id = 1
+            """, (
+                round(amount, 2),
+                datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
+            ))
+            con.commit()
+    except Exception:
+        pass
+
+def get_public_found_refund() -> float:
+    try:
+        with _analytics_connect() as con:
+            row = con.execute(
+                "SELECT total_found_refund FROM public_stats WHERE id=1"
+            ).fetchone()
+            return round(float(row["total_found_refund"] or 0), 2) if row else 0.0
+    except Exception:
+        return 0.0
+
+@app.get("/api/public-stats")
+def public_stats():
+    return {"found_refund": get_public_found_refund()}
+
 class AnalyticsEventPayload(BaseModel):
     event: str
     session_id: str
@@ -1565,7 +1611,7 @@ def analytics_dashboard():
 
 @app.get("/health")
 def health():
-    return {"ok": True, "version": "2.4.1", "legal_ready": legal_ready(), "service": "СделатьВычет", "metrika_configured": bool(METRIKA_COUNTER_ID), "analytics_db": bool(ANALYTICS_DB_PATH)}
+    return {"ok": True, "version": "2.4.2", "legal_ready": legal_ready(), "service": "СделатьВычет", "metrika_configured": bool(METRIKA_COUNTER_ID), "analytics_db": bool(ANALYTICS_DB_PATH)}
 
 
 @app.post("/api/analyze")
@@ -1693,6 +1739,8 @@ async def analyze(
                 refund_value=result["potential_if_all_confirmed"]["refund_from"],
                 dedupe_key=f"analysis_success:{analysis_id}",
             )
+
+        increment_public_found_refund(result["potential_if_all_confirmed"]["refund_from"])
 
         # ВАЖНО: до оплаты браузер получает только агрегаты, без категорий и транзакций.
         return JSONResponse({
@@ -1980,6 +2028,19 @@ button{touch-action:manipulation}
 .eyebrowDot{width:6px;height:6px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 4px rgba(183,255,42,.15)}
 h1{font-size:64px;line-height:.96;letter-spacing:-.06em;margin:0;max-width:720px;font-weight:820}
 .heroText{font-size:17px;line-height:1.55;color:var(--muted);max-width:620px;margin:22px 0 27px}
+
+.publicCounter{
+  display:inline-flex;align-items:baseline;gap:7px;margin-top:18px;
+  padding:10px 13px;border-radius:999px;background:#111;color:#fff;
+  width:max-content;max-width:100%;box-shadow:0 8px 24px rgba(0,0,0,.08)
+}
+.publicCounter span{font-size:10px;color:#a8a8a2;font-weight:650}
+.publicCounter b{font-size:14px;letter-spacing:-.03em;white-space:nowrap}
+@media(max-width:600px){
+  .publicCounter{padding:9px 11px;margin-top:15px}
+  .publicCounter span{font-size:9px}
+  .publicCounter b{font-size:12px}
+}
 .heroActions{display:flex;gap:13px;align-items:center;flex-wrap:wrap}
 .btn{
   appearance:none;border:0;border-radius:10px;padding:12px 15px;font-weight:780;cursor:pointer;
@@ -2411,13 +2472,14 @@ th{color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.06e
       <div class="eyebrow"><span class="eyebrowDot"></span>Поиск вычетов по банковской выписке</div>
       <h1>Найдём ваш налоговый вычет за 5 минут.</h1>
       <p class="heroText">Загрузите банковскую выписку. СделатьВычет поможет найти расходы, которые могут дать налоговый вычет, оценит сумму возврата и сведёт всё к нескольким понятным действиям.</p>
+      <div class="publicCounter" id="publicCounter"><span>Уже нашли вычетов на</span><b id="publicCounterValue">— ₽</b></div>
       <div class="heroActions">
         <label for="file" class="btn btnPrimary">Загрузить выписку <span>→</span></label>
         <span class="heroHint">Бесплатный поиск → детали за 499 ₽</span>
       </div>
     </div>
     <div class="preview">
-      <div class="previewTop"><span>Результат</span><span class="previewPill">SDELATVYCHET 2.4.1</span></div>
+      <div class="previewTop"><span>Результат</span><span class="previewPill">SDELATVYCHET 2.4.2</span></div>
       <div class="previewLabel">Потенциальный вычет</div>
       <div class="previewMoney">от 20 208 ₽</div>
       <div class="previewFast"><i>✓</i>Сразу покажем, где искать вычет</div>
@@ -2630,6 +2692,18 @@ function makeAnalyticsSession(){
 }
 const analyticsSessionId=makeAnalyticsSession();
 
+const publicRub=n=>new Intl.NumberFormat('ru-RU',{maximumFractionDigits:0}).format(Math.round(Number(n)||0))+' ₽';
+async function refreshPublicCounter(){
+  try{
+    const r=await fetch('/api/public-stats',{cache:'no-store'});
+    const d=await r.json();
+    if(r.ok&&document.getElementById('publicCounterValue')){
+      document.getElementById('publicCounterValue').textContent=publicRub(d.found_refund);
+    }
+  }catch(e){}
+}
+
+
 function analyticsAttribution(){
   const q=new URLSearchParams(location.search);
   let ref='';
@@ -2777,6 +2851,7 @@ analyze.onclick=async()=>{
     analysisId=data.analysis_id;
     localStorage.setItem('sdelatVychetAnalysisId',analysisId);
     metrikaGoal('analysis_success');
+    refreshPublicCounter();
     showSummary(data);
   }catch(e){
     track('analysis_error');
@@ -2879,6 +2954,7 @@ async function resumeAfterPayment(){
 window.addEventListener('DOMContentLoaded',()=>{
   initAnalyticsConsent();
   track('visit');
+  refreshPublicCounter();
   resumeAfterPayment();
 });
 
