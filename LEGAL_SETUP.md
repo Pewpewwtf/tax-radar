@@ -12,14 +12,13 @@ Already configured:
 - server-side version validation
 - consent audit event
 
-## REQUIRED: operator address
+## Operator address
 
-Add a Timeweb environment variable:
+Configured in the application:
+Зелёный проспект, д. 32
 
-OPERATOR_ADDRESS=<full operator address>
-
-The address is required in the operator identification for a written-form
-personal-data consent under Art. 9(4) of Federal Law 152-FZ.
+You may override it in Timeweb with:
+OPERATOR_ADDRESS=<new address>
 
 ## IMPORTANT: persistent consent evidence
 

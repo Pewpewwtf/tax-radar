@@ -21,7 +21,7 @@ from fastapi import FastAPI, File, UploadFile, HTTPException, Request, Form
 from fastapi.responses import HTMLResponse, JSONResponse, Response, RedirectResponse
 from pydantic import BaseModel
 
-app = FastAPI(title="Tax Radar", version="1.9.0")
+app = FastAPI(title="Tax Radar", version="1.9.1")
 
 
 REPORT_PRICE_RUB = 499
@@ -40,7 +40,7 @@ OPERATOR_INN = "772072450119"
 OPERATOR_EMAIL = "inbox@sdelatvychet.ru"
 # Закон требует адрес оператора в письменном согласии. До публичного запуска
 # заполните эту переменную в Timeweb: OPERATOR_ADDRESS=...
-OPERATOR_ADDRESS = os.getenv("OPERATOR_ADDRESS", "").strip()
+OPERATOR_ADDRESS = os.getenv("OPERATOR_ADDRESS", "Зелёный проспект, д. 32").strip()
 
 TERMS_VERSION = "2026-08-27-v1"
 PRIVACY_VERSION = "2026-08-27-v1"
@@ -1228,7 +1228,7 @@ def legal_status():
 
 @app.get("/health")
 def health():
-    return {"ok": True, "version": "1.9.0", "legal_ready": legal_ready()}
+    return {"ok": True, "version": "1.9.1", "legal_ready": legal_ready()}
 
 
 @app.post("/api/analyze")
@@ -1839,7 +1839,7 @@ th{color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.06e
 <body>
 <div class="wrap">
   <header class="header">
-    <div class="brand"><span class="brandMark">₽</span>Tax Radar <span class="beta">LEGAL 1.9</span></div>
+    <div class="brand"><span class="brandMark">₽</span>Tax Radar <span class="beta">LEGAL 1.9.1</span></div>
     <div class="secure"><span class="secureDot"></span>Файл не сохраняется после анализа</div>
   </header>
 
@@ -1854,7 +1854,7 @@ th{color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.06e
       </div>
     </div>
     <div class="preview">
-      <div class="previewTop"><span>Результат</span><span class="previewPill">LEGAL 1.9</span></div>
+      <div class="previewTop"><span>Результат</span><span class="previewPill">LEGAL 1.9.1</span></div>
       <div class="previewLabel">Можно вернуть</div>
       <div class="previewMoney">от 20 208 ₽</div>
       <div class="previewFast"><i>✓</i>15 078 ₽ — за 2 простых действия</div>
