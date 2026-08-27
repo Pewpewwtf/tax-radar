@@ -20,7 +20,7 @@ from fastapi import FastAPI, File, UploadFile, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response, RedirectResponse
 from pydantic import BaseModel
 
-app = FastAPI(title="Tax Radar", version="1.6.1")
+app = FastAPI(title="Tax Radar", version="1.7.0")
 
 
 REPORT_PRICE_RUB = 499
@@ -75,6 +75,52 @@ def public_base_url(request: Request) -> str:
     if PUBLIC_BASE_URL:
         return PUBLIC_BASE_URL
     return str(request.base_url).rstrip("/")
+
+
+# Recognition signatures for major Russian retail banks.
+# Detection != guaranteed bank-specific parsing: unsupported layouts fall through
+# to the strict universal deduction-oriented parser.
+BANK_SIGNATURES = [
+    ("sber", "Сбер", ["ПАО СБЕРБАНК", "СБЕРБАНК", "SBERBANK.RU", "СБЕР БАНК"]),
+    ("vtb", "ВТБ", ["БАНК ВТБ", "ВТБ (ПАО)", "VTB.RU", "ПАО ВТБ"]),
+    ("gazprombank", "Газпромбанк", ["ГАЗПРОМБАНК", "БАНК ГПБ", "GAZPROMBANK"]),
+    ("alfa", "Альфа-Банк", ["АЛЬФА-БАНК", "АЛЬФА БАНК", "ALFABANK", "ALFA-BANK"]),
+    ("tbank", "Т-Банк", ["АО «ТБАНК»", 'АО "ТБАНК"', "Т-БАНК", "TBANK.RU", "ТИНЬКОФФ БАНК", "TINKOFF BANK"]),
+    ("rshb", "Россельхозбанк", ["РОССЕЛЬХОЗБАНК", "RSHB.RU"]),
+    ("mkb", "МКБ", ["МОСКОВСКИЙ КРЕДИТНЫЙ БАНК", "МКБ", "MKB.RU"]),
+    ("domrf", "Банк ДОМ.РФ", ["БАНК ДОМ.РФ", "DOM.RF BANK", "ДОМ.РФ БАНК"]),
+    ("sovcombank", "Совкомбанк", ["СОВКОМБАНК", "ХАЛВА", "SOVCOMBANK"]),
+    ("raiffeisen", "Райффайзенбанк", ["РАЙФФАЙЗЕНБАНК", "RAIFFEISENBANK", "RAIFFEISEN BANK"]),
+    ("bmbank", "БМ-Банк", ["БМ-БАНК", "БМ БАНК"]),
+    ("novikom", "Новикомбанк", ["НОВИКОМБАНК"]),
+    ("bankrossiya", "Банк Россия", ['БАНК "РОССИЯ"', "АБ РОССИЯ"]),
+    ("bspb", "Банк Санкт-Петербург", ["БАНК САНКТ-ПЕТЕРБУРГ", "BSPB.RU"]),
+    ("akbars", "Ак Барс Банк", ["АК БАРС", "AK BARS"]),
+    ("rencap", "РенКап Банк", ["РЕНКАП БАНК", "РЕНЕССАНС КРЕДИТ", "RENCAP"]),
+    ("otp", "ОТП Банк", ["ОТП БАНК", "OTP BANK"]),
+    ("ozon", "Озон Банк", ["ОЗОН БАНК", "OZON BANK"]),
+    ("uralsib", "Уралсиб", ["УРАЛСИБ", "URALSIB"]),
+    ("mts", "МТС Банк", ["МТС БАНК", "MTS BANK"]),
+    ("unicredit", "ЮниКредит Банк", ["ЮНИКРЕДИТ БАНК", "UNICREDIT BANK"]),
+    ("tkb", "ТКБ Банк", ["ТКБ БАНК", "TRANSKAPITALBANK"]),
+    ("yandex", "Яндекс Банк", ["ЯНДЕКС БАНК", "YANDEX BANK"]),
+    ("atb", "Азиатско-Тихоокеанский Банк", ["АЗИАТСКО-ТИХООКЕАНСКИЙ БАНК", "АТБ БАНК"]),
+    ("expobank", "Экспобанк", ["ЭКСПОБАНК", "EXPOBANK"]),
+    ("tochka", "Точка", ["БАНК ТОЧКА", "ТОЧКА БАНК"]),
+    ("ubrir", "УБРиР", ["УБРИР", "УРАЛЬСКИЙ БАНК РЕКОНСТРУКЦИИ И РАЗВИТИЯ"]),
+    ("russianstandard", "Русский Стандарт", ["РУССКИЙ СТАНДАРТ", "RUSSIAN STANDARD"]),
+    ("credit_europe", "Кредит Европа Банк", ["КРЕДИТ ЕВРОПА БАНК", "CREDIT EUROPE BANK"]),
+    ("loko", "Локо-Банк", ["ЛОКО-БАНК", "LOKO BANK"]),
+]
+
+
+def recognize_bank(text: str) -> tuple[str, str]:
+    upper = text.upper()
+    for key, display, markers in BANK_SIGNATURES:
+        if any(marker.upper() in upper for marker in markers):
+            return key, display
+    return "unknown", "Неизвестный банк"
+
 
 CATEGORY_META = {
     "medicine": {"name": "Медицина", "emoji": "🏥", "confidence": "high", "note": "Похоже на оплату медицинских услуг. Для вычета потребуется подтверждение от медицинской организации."},
@@ -367,6 +413,295 @@ def parse_sber_pdf_text(text: str) -> list[dict[str, Any]]:
     return txs
 
 
+
+VTB_ROW_START_RE = re.compile(
+    r"(?m)^(\d{2}\.\d{2}\.\d{4})(?:\s+|\n)(\d{2}:\d{2}(?::\d{2})?)"
+)
+
+RAIFF_ROW_RE = re.compile(
+    r"(?m)^\s*(\d+)\s+(\d{2}\.\d{2}\.\d{2,4})\s+(\d{2}\.\d{2}\.\d{2,4})\s+"
+)
+
+GENERIC_DATE_RE = re.compile(
+    r"(?m)^(?:\d+\s+)?(\d{2}[./-]\d{2}[./-]\d{2,4})(?:\s+(\d{2}:\d{2}(?::\d{2})?))?"
+)
+GENERIC_MONEY_RE = re.compile(
+    r"(?<!\d)([+-]?(?:\d{1,3}(?:[ \u00a0.,]\d{3})+|\d+)(?:[.,-]\d{2}))\s*(₽|RUB|RUR)?",
+    re.I,
+)
+
+DEBIT_WORDS = (
+    "ОПЛАТА", "ПОКУПКА", "СПИСАН", "ПЕРЕВОД НА", "ПЕРЕВОД ПО", "СНЯТИ",
+    "ВЫДАЧА НАЛИЧ", "КОМИСС", "ПЛАТА", "PAYMENT", "PURCHASE", "DEBIT",
+)
+CREDIT_WORDS = (
+    "ПОПОЛН", "ЗАЧИСЛ", "ВОЗВРАТ", "ПЕРЕВОД С НОМЕРА", "ПЕРЕВОД ОТ",
+    "ВНЕСЕНИЕ НАЛИЧ", "CREDIT",
+)
+
+
+def _parse_money_generic(raw: str) -> float:
+    s = raw.replace("\u00a0", " ").strip()
+    # Raiffeisen old-style "2,000-00" -> 2000.00
+    if re.match(r"^-?\d{1,3}(?:,\d{3})*-\d{2}$", s):
+        neg = s.startswith("-")
+        s2 = s.lstrip("-").replace(",", "").replace("-", ".")
+        val = float(s2)
+        return -val if neg else val
+
+    # Russian spaces thousands + comma decimal.
+    if "," in s and "." not in s:
+        s = s.replace(" ", "").replace(",", ".")
+    else:
+        # If both separators occur, assume commas/spaces are grouping.
+        s = s.replace(" ", "").replace(",", "")
+    return float(s)
+
+
+def extract_vtb_merchant(desc: str) -> str:
+    s = normalize(desc)
+    # Common VTB descriptions put the useful counterparty/merchant at the end.
+    for marker in ("ОПИСАНИЕ ОПЕРАЦИИ", "ОПИСАНИЕ:"):
+        s = s.replace(marker, " ")
+    s = re.sub(r"\b(?:RUS|RUB|RUВ)\b", " ", s, flags=re.I)
+    s = normalize(s)
+    return s[-100:] if len(s) > 100 else (s or "Операция ВТБ")
+
+
+def parse_vtb_pdf_text(text: str) -> list[dict[str, Any]]:
+    """
+    Supports the common VTB retail statement family described with:
+    operation datetime, bank processing date, operation amount, card/account
+    income/expense and description.
+    """
+    starts = list(VTB_ROW_START_RE.finditer(text))
+    if not starts:
+        raise ValueError("Не удалось найти операции в выписке ВТБ.")
+
+    txs = []
+    for i, m in enumerate(starts):
+        end = starts[i + 1].start() if i + 1 < len(starts) else len(text)
+        block = normalize(text[m.end():end])
+        if not block:
+            continue
+
+        # Remove processing dates/times before looking for monetary values.
+        # Otherwise "08.06.2023" can be misread as 8.06.
+        money_block = re.sub(r"\b\d{2}\.\d{2}\.\d{4}\b", " ", block)
+        money_block = re.sub(r"\b\d{2}:\d{2}(?::\d{2})?\b", " ", money_block)
+
+        amounts = []
+        for mm in GENERIC_MONEY_RE.finditer(money_block):
+            try:
+                amounts.append((_parse_money_generic(mm.group(1)), mm.group(0), mm.start()))
+            except Exception:
+                pass
+        if not amounts:
+            continue
+
+        upper = block.upper()
+        # Prefer explicit "расход" value if textual labels survived extraction.
+        expense_match = re.search(r"(?:РАСХОД|ДЕБЕТ)\D{0,20}(\d[\d \u00a0.,]*[.,]\d{2})", block, re.I)
+        income_match = re.search(r"(?:ПРИХОД|КРЕДИТ)\D{0,20}(\d[\d \u00a0.,]*[.,]\d{2})", block, re.I)
+
+        if expense_match:
+            amount = -abs(_parse_money_generic(expense_match.group(1)))
+        elif income_match and not any(w in upper for w in DEBIT_WORDS):
+            amount = abs(_parse_money_generic(income_match.group(1)))
+        else:
+            # Signed operation amount if present.
+            signed = [a for a in amounts if a[0] < 0]
+            if signed:
+                amount = signed[0][0]
+            else:
+                # Purchase/payment descriptions are debits; transfers-in/refunds credits.
+                op_amount = abs(amounts[0][0])
+                if any(w in upper for w in CREDIT_WORDS) and not any(w in upper for w in DEBIT_WORDS):
+                    amount = op_amount
+                else:
+                    amount = -op_amount
+
+        # Remove numbers to produce a cleaner merchant-like description.
+        desc = re.sub(r"\d[\d \u00a0.,-]*\s*(?:RUB|RUR|RUВ|₽)?", " ", block, flags=re.I)
+        desc = normalize(desc)
+
+        txs.append({
+            "date": m.group(1),
+            "code": f"VTB_{i+1:05d}",
+            "description": desc,
+            "merchant": extract_vtb_merchant(desc),
+            "amount": round(amount, 2),
+            "bank": "ВТБ",
+            "parser_confidence": "bank_specific_beta",
+        })
+    if not txs:
+        raise ValueError("Не удалось распознать операции в выписке ВТБ.")
+    return txs
+
+
+def extract_raiff_merchant(desc: str) -> str:
+    s = normalize(desc)
+    # Card lines commonly: CARD **9997 11AUG RUR 443 MERCHANT CITY
+    m = re.search(r"\bCARD\b.*?\b(?:RUR|RUB)\b\s+[\d.]+\s+(.+)$", s, re.I)
+    if m:
+        merchant = m.group(1)
+        merchant = re.sub(r"\s+(?:MOSKVA|MOSCOW|SANKT-PETERBU|RUS|RU)$", "", merchant, flags=re.I)
+        return merchant[:100].strip()
+    # SBP payment lines: "Оплата покупки 329.00 RUB МПП - Платные дороги."
+    m = re.search(r"Оплата покупки(?: по карте)?[.\s]+(?:[\d.,]+\s+RUB\s+)?(.+)", s, re.I)
+    if m:
+        return m.group(1)[:100].strip()
+    return s[-100:] if len(s) > 100 else (s or "Операция Райффайзен")
+
+
+def parse_raiffeisen_pdf_text(text: str) -> list[dict[str, Any]]:
+    rows = list(RAIFF_ROW_RE.finditer(text))
+    if not rows:
+        raise ValueError("Не удалось найти операции в выписке Райффайзенбанка.")
+    txs = []
+    for i, m in enumerate(rows):
+        end = rows[i+1].start() if i+1 < len(rows) else len(text)
+        block = normalize(text[m.end():end])
+        upper = block.upper()
+
+        # Raiff account statements usually carry an amount like 2,000-00.
+        candidates = []
+        for mm in re.finditer(r"(?<!\d)(\d{1,3}(?:,\d{3})*-\d{2}|\d[\d \u00a0]*[.,]\d{2})(?!\d)", block):
+            try:
+                val = _parse_money_generic(mm.group(1))
+                candidates.append((val, mm.start(), mm.group(1)))
+            except Exception:
+                pass
+        if not candidates:
+            continue
+
+        # Skip long account/correspondent numbers by requiring reasonable transaction magnitude token.
+        amount_abs = abs(candidates[0][0])
+        if amount_abs == 0:
+            continue
+
+        if any(w in upper for w in CREDIT_WORDS) and not any(w in upper for w in DEBIT_WORDS):
+            amount = amount_abs
+        else:
+            amount = -amount_abs
+
+        desc = block
+        txs.append({
+            "date": normalize_date(m.group(2)),
+            "code": f"RAIFF_{m.group(1)}",
+            "description": desc,
+            "merchant": extract_raiff_merchant(desc),
+            "amount": round(amount, 2),
+            "bank": "Райффайзенбанк",
+            "parser_confidence": "bank_specific_beta",
+        })
+    if not txs:
+        raise ValueError("Не удалось распознать операции в выписке Райффайзенбанка.")
+    return txs
+
+
+def _tax_signal_in_text(s: str) -> bool:
+    up = s.upper()
+    for _cat, pats in RULES:
+        if any(re.search(p, up, re.I) for p in pats):
+            return True
+    return False
+
+
+def parse_generic_tax_pdf_text(text: str, bank_display: str = "Банк") -> list[dict[str, Any]]:
+    """
+    Strict fallback for digital PDFs from unsupported banks.
+
+    It does NOT try to reconstruct the whole ledger. It only emits transaction
+    blocks that contain a tax-deduction signal AND where an amount can be
+    associated with the block with reasonable confidence.
+    """
+    starts = list(GENERIC_DATE_RE.finditer(text))
+    if not starts:
+        raise ValueError("В PDF не удалось найти таблицу операций.")
+
+    out = []
+    seen = set()
+    for i, m in enumerate(starts):
+        end = starts[i+1].start() if i+1 < len(starts) else min(len(text), m.end()+1200)
+        block_raw = text[m.start():end]
+        block = normalize(block_raw)
+        if not _tax_signal_in_text(block):
+            continue
+
+        upper = block.upper()
+        # Avoid document headers that happen to mention medical/insurance words.
+        if len(block) > 900:
+            continue
+
+        money_scan_block = re.sub(r"\b\d{2}[./-]\d{2}[./-]\d{2,4}\b", " ", block)
+        money_scan_block = re.sub(r"\b\d{2}:\d{2}(?::\d{2})?\b", " ", money_scan_block)
+
+        money = []
+        for mm in GENERIC_MONEY_RE.finditer(money_scan_block):
+            raw = mm.group(1)
+            try:
+                val = _parse_money_generic(raw)
+            except Exception:
+                continue
+            # Reject obvious years/account fragments and zeroes.
+            if val == 0 or abs(val) > 10_000_000:
+                continue
+            score = 0
+            if mm.group(2):
+                score += 3
+            if raw.startswith(("+", "-")):
+                score += 2
+            # Transaction amount usually sits near purchase/merchant text.
+            dist = min(
+                [abs(mm.start()-p) for p in [upper.find("ОПЛАТ"), upper.find("ПОКУП"), upper.find("MED"), upper.find("АПТЕК"), upper.find("FIT") ] if p >= 0]
+                or [999]
+            )
+            if dist < 250:
+                score += 2
+            money.append((score, mm.start(), val, raw))
+
+        if not money:
+            continue
+        money.sort(key=lambda x: (-x[0], x[1]))
+        best = money[0]
+        # Require some structural evidence; otherwise do not invent a number.
+        if best[0] < 2:
+            continue
+
+        val = abs(best[2])
+        if any(w in upper for w in CREDIT_WORDS) and not any(w in upper for w in DEBIT_WORDS):
+            amount = val
+        else:
+            amount = -val
+
+        fingerprint = (m.group(1), round(amount, 2), block[:160])
+        if fingerprint in seen:
+            continue
+        seen.add(fingerprint)
+
+        # Use the tax-relevant part of the block as merchant-ish label.
+        merchant = block[:100]
+        for token in ("MEDSI", "MEDSKAN", "АПТЕК", "FITNESS", "ФИТНЕС", "СТРАХ", "INSURANCE", "КЛИНИК", "STOMAT"):
+            pos = upper.find(token)
+            if pos >= 0:
+                merchant = block[max(0, pos-30):pos+70]
+                break
+
+        out.append({
+            "date": normalize_date(m.group(1).replace("/", ".").replace("-", ".")),
+            "code": f"GENERIC_{i+1:05d}",
+            "description": block,
+            "merchant": normalize(merchant),
+            "amount": round(amount, 2),
+            "bank": bank_display,
+            "parser_confidence": "strict_generic",
+        })
+
+    # Returning no candidates is valid: statement may simply have no deductible spend.
+    return out
+
+
 def parse_alfa_pdf_text(text: str) -> list[dict[str, Any]]:
     txs = []
     for m in TX_RE.finditer(text):
@@ -397,31 +732,36 @@ def extract_pdf_text(data: bytes) -> str:
 
 def detect_pdf_bank_from_text(text: str) -> str:
     upper = text.upper()
+    key, _display = recognize_bank(text)
 
-    if (
-        "СБЕРБАНК" in upper
-        or "SBERBANK.RU" in upper
-        or "ПАО СБЕРБАНК" in upper
-    ) and (
+    # Exact known layouts first.
+    if key == "sber" and (
         "ВЫПИСКА ПО СЧЁТУ КРЕДИТНОЙ КАРТЫ" in upper
         or "РАСШИФРОВКА ОПЕРАЦИЙ" in upper
         or SBER_PAIR_RE.search(text)
     ):
         return "sber"
 
-    if (
-        "ТБАНК" in upper
-        or "Т-БАНК" in upper
-        or "TBANK.RU" in upper
-        or "ТИНЬКОФФ БАНК" in upper
-        or "TINKOFF BANK" in upper
-    ) and ("СПРАВКА О ДВИЖЕНИИ СРЕДСТВ" in upper or TBANK_PAIR_RE.search(text)):
+    if key == "tbank" and (
+        "СПРАВКА О ДВИЖЕНИИ СРЕДСТВ" in upper
+        or TBANK_PAIR_RE.search(text)
+    ):
         return "tbank"
 
-    if "АЛЬФА" in upper or "ALFA" in upper or RUR_AMOUNT_RE.search(text):
+    if key == "alfa" or ("АЛЬФА" in upper and RUR_AMOUNT_RE.search(text)):
         return "alfa"
 
+    if key == "vtb":
+        return "vtb"
+
+    if key == "raiffeisen":
+        return "raiffeisen"
+
+    if key != "unknown":
+        return f"known:{key}"
+
     return "unknown"
+
 
 
 def parse_alfa_pdf(data: bytes) -> list[dict[str, Any]]:
@@ -574,7 +914,7 @@ def index():
 
 @app.get("/health")
 def health():
-    return {"ok": True, "version": "1.6.1"}
+    return {"ok": True, "version": "1.7.0"}
 
 
 @app.post("/api/analyze")
@@ -589,14 +929,33 @@ async def analyze(file: UploadFile = File(...)):
         if name.endswith(".pdf"):
             pdf_text = extract_pdf_text(data)
             bank = detect_pdf_bank_from_text(pdf_text)
+            bank_key, bank_display = recognize_bank(pdf_text)
             if bank == "sber":
                 txs, parser = parse_sber_pdf_text(pdf_text), "Сбер PDF"
             elif bank == "tbank":
                 txs, parser = parse_tbank_pdf_text(pdf_text), "Т-Банк PDF"
             elif bank == "alfa":
                 txs, parser = parse_alfa_pdf_text(pdf_text), "Альфа-Банк PDF"
+            elif bank == "vtb":
+                try:
+                    txs = parse_vtb_pdf_text(pdf_text)
+                    parser = "ВТБ PDF"
+                except ValueError:
+                    txs = parse_generic_tax_pdf_text(pdf_text, bank_display)
+                    parser = "ВТБ PDF · универсальный разбор"
+            elif bank == "raiffeisen":
+                try:
+                    txs = parse_raiffeisen_pdf_text(pdf_text)
+                    parser = "Райффайзен PDF"
+                except ValueError:
+                    txs = parse_generic_tax_pdf_text(pdf_text, bank_display)
+                    parser = "Райффайзен PDF · универсальный разбор"
+            elif bank.startswith("known:"):
+                txs = parse_generic_tax_pdf_text(pdf_text, bank_display)
+                parser = f"{bank_display} PDF · универсальный разбор"
             else:
-                raise ValueError("Не удалось определить формат PDF. Сейчас поддерживаются выписки Альфа-Банка, Т-Банка и Сбера.")
+                txs = parse_generic_tax_pdf_text(pdf_text, "Неизвестный банк")
+                parser = "PDF · универсальный разбор"
         elif name.endswith(".csv"):
             txs, parser = parse_csv(data), "CSV"
         elif name.endswith(".xlsx") or name.endswith(".xlsm"):
@@ -1035,7 +1394,7 @@ th{color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.06e
 <body>
 <div class="wrap">
   <header class="header">
-    <div class="brand"><span class="brandMark">₽</span>Tax Radar <span class="beta">PAID 1.6.1</span></div>
+    <div class="brand"><span class="brandMark">₽</span>Tax Radar <span class="beta">UNIVERSAL 1.7</span></div>
     <div class="secure"><span class="secureDot"></span>Файл не сохраняется после анализа</div>
   </header>
 
@@ -1050,7 +1409,7 @@ th{color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.06e
       </div>
     </div>
     <div class="preview">
-      <div class="previewTop"><span>Результат</span><span class="previewPill">PAID 1.6.1</span></div>
+      <div class="previewTop"><span>Результат</span><span class="previewPill">UNIVERSAL 1.7</span></div>
       <div class="previewLabel">Можно вернуть</div>
       <div class="previewMoney">от 20 208 ₽</div>
       <div class="previewFast"><i>✓</i>15 078 ₽ — за 2 простых действия</div>
@@ -1072,7 +1431,7 @@ th{color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.06e
         <div class="uploadIcon">↥</div>
         <div class="uploadMeta">
           <div class="uploadTitle" id="fname">Выберите банковскую выписку</div>
-          <div class="uploadSub" id="fileSub">Альфа / Т-Банк / Сбер · PDF, CSV или XLSX · до 30 МБ</div>
+          <div class="uploadSub" id="fileSub">PDF любого банка · также CSV / XLSX · до 30 МБ</div>
         </div>
       </div>
       <span class="uploadPick" id="uploadPick">Выбрать файл</span>
