@@ -1,4 +1,4 @@
-# Tax Radar 1.9 — legal setup before public launch
+# СделатьВычет 1.9 — legal setup before public launch
 
 Already configured:
 - Operator: Колосов Роман Михайлович

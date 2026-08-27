@@ -21,7 +21,7 @@ from fastapi import FastAPI, File, UploadFile, HTTPException, Request, Form
 from fastapi.responses import HTMLResponse, JSONResponse, Response, RedirectResponse
 from pydantic import BaseModel
 
-app = FastAPI(title="Tax Radar", version="1.9.1")
+app = FastAPI(title="СделатьВычет", version="2.1.1")
 
 
 REPORT_PRICE_RUB = 499
@@ -34,7 +34,7 @@ PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
 PAYMENT_TEST_MODE = os.getenv("PAYMENT_TEST_MODE", "").strip().lower() in {"1", "true", "yes", "on"}
 
 
-SERVICE_NAME = "Tax Radar"
+SERVICE_NAME = "СделатьВычет"
 OPERATOR_NAME = "Колосов Роман Михайлович"
 OPERATOR_INN = "772072450119"
 OPERATOR_EMAIL = "inbox@sdelatvychet.ru"
@@ -68,7 +68,7 @@ def request_ip(request: Request) -> str:
 
 def privacy_hash(value: str) -> str:
     """Store a pseudonymous proof rather than raw IP / user-agent."""
-    key = (CONSENT_AUDIT_SECRET or "tax-radar-consent-audit-v1").encode("utf-8")
+    key = (CONSENT_AUDIT_SECRET or "sdelat-vychet-consent-audit-v1").encode("utf-8")
     return hmac.new(key, (value or "").encode("utf-8"), hashlib.sha256).hexdigest()
 
 
@@ -94,7 +94,7 @@ def legal_shell(title: str, content: str) -> str:
     """
     return f"""<!doctype html>
 <html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{escape(title)} — Tax Radar</title>
+<title>{escape(title)} — СделатьВычет</title>
 <style>
 :root{{--ink:#111;--muted:#6c6c66;--line:#e4e4dd;--paper:#f5f5f0;--accent:#b7ff2a}}
 *{{box-sizing:border-box}}body{{margin:0;background:var(--paper);color:var(--ink);font-family:Inter,Arial,sans-serif}}
@@ -108,7 +108,13 @@ p,li{{font-size:14px;line-height:1.65}}li{{margin:6px 0}}.meta{{font-size:12px;c
 .operator{{margin-top:28px;padding-top:20px;border-top:1px solid var(--line);font-size:13px;line-height:1.7}}
 code{{background:#eee;padding:2px 5px;border-radius:4px}}@media(max-width:650px){{article{{padding:24px 18px}}h1{{font-size:28px}}}}
 </style></head><body><div class="wrap">
-<div class="top"><div class="brand">Tax Radar</div><a class="back" href="/">← Вернуться к сервису</a></div>
+<div class="top"><div class="brand">
+  <svg class="brandMark" viewBox="0 0 44 44" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="СделатьВычет">
+    <rect x="1" y="1" width="42" height="42" rx="13" fill="#B7FF2A"/>
+    <path d="M14 23.5L19.2 28.7L30 16.8" stroke="#142000" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  </svg>
+  <div class="brandWord"><b>СделатьВычет</b><span>Налоговый помощник</span></div>
+</div><a class="back" href="/">← Вернуться к сервису</a></div>
 {address_warning}
 <article>{content}</article></div></body></html>"""
 
@@ -137,13 +143,13 @@ def terms_html() -> str:
       <p>Используя сервис и отдельно принимая настоящее Соглашение, пользователь подтверждает,
       что достиг 18 лет, действует от своего имени и ознакомился с условиями сервиса.</p>
 
-      <h2>2. Что делает Tax Radar</h2>
+      <h2>2. Что делает СделатьВычет</h2>
       <p>Сервис автоматически анализирует банковскую выписку пользователя, ищет операции,
       которые по описанию могут относиться к расходам, учитываемым при получении налоговых
       вычетов, рассчитывает ориентировочную сумму и формирует персональный информационный отчёт
       и пошаговый маршрут дальнейших действий.</p>
       <div class="note"><b>Важно:</b> результат является предварительным информационным расчётом.
-      Tax Radar не является ФНС России, налоговым органом, адвокатским или аудиторским сервисом
+      СделатьВычет не является ФНС России, налоговым органом, адвокатским или аудиторским сервисом
       и не гарантирует предоставление вычета или возврат конкретной суммы.</div>
 
       <h2>3. Обязанности пользователя</h2>
@@ -199,7 +205,7 @@ def privacy_html() -> str:
       <div class="meta">Версия {PRIVACY_VERSION}. Действует с 27 августа 2026 года.</div>
 
       <h2>1. Оператор</h2>
-      <p>Оператором персональных данных при использовании Tax Radar является
+      <p>Оператором персональных данных при использовании СделатьВычет является
       {escape(OPERATOR_NAME)}. Контакт для обращений: {escape(OPERATOR_EMAIL)}.</p>
 
       <h2>2. Какие данные обрабатываются</h2>
@@ -211,11 +217,11 @@ def privacy_html() -> str:
         <li>идентификатор анализа, сведения о факте и статусе оплаты;</li>
         <li>техническую запись о принятии документов: дата и время, версии документов, псевдонимизированные хэши IP-адреса и user-agent.</li>
       </ul>
-      <p>Платёжные реквизиты банковской карты пользователя Tax Radar не получает: ввод
+      <p>Платёжные реквизиты банковской карты пользователя СделатьВычет не получает: ввод
       платёжных данных происходит на стороне платёжного провайдера.</p>
 
       <h2>3. Специальные категории данных</h2>
-      <p>Tax Radar <b>не предназначен для получения диагнозов, медицинских карт, сведений о
+      <p>СделатьВычет <b>не предназначен для получения диагнозов, медицинских карт, сведений о
       заболеваниях или иных медицинских документов</b>. Сервис анализирует исключительно
       банковские операции в целях классификации расходов для налогового вычета и не ставит
       диагнозов и не делает выводов о состоянии здоровья пользователя.</p>
@@ -242,7 +248,7 @@ def privacy_html() -> str:
       <h2>6. Кому могут передаваться данные</h2>
       <p>Для технической работы сервиса используется российская серверная инфраструктура
       хостинг-провайдера. При оплате минимально необходимые сведения о заказе передаются
-      платёжному провайдеру. Tax Radar не передаёт третьим лицам исходную банковскую выписку
+      платёжному провайдеру. СделатьВычет не передаёт третьим лицам исходную банковскую выписку
       для рекламных целей и не продаёт персональные данные.</p>
 
       <h2>7. Локализация</h2>
@@ -1228,7 +1234,7 @@ def legal_status():
 
 @app.get("/health")
 def health():
-    return {"ok": True, "version": "1.9.1", "legal_ready": legal_ready()}
+    return {"ok": True, "version": "2.1.1", "legal_ready": legal_ready(), "service": "СделатьВычет"}
 
 
 @app.post("/api/analyze")
@@ -1370,7 +1376,7 @@ def create_payment(payload: PaymentPayload, request: Request):
             "amount": {"value": f"{REPORT_PRICE_RUB:.2f}", "currency": "RUB"},
             "capture": True,
             "confirmation": {"type": "redirect", "return_url": return_url},
-            "description": "Tax Radar — персональный налоговый отчёт",
+            "description": "СделатьВычет — персональный налоговый отчёт",
             "metadata": {"analysis_id": payload.analysis_id},
         },
         idempotence_key=str(uuid.uuid4()),
@@ -1487,7 +1493,7 @@ def packet(payload: PacketPayload):
         action_html.append(
             f"<div class='action'><div class='n'>1</div><div><b>Получить справки одним пакетом — от {easy_calc['refund_from']:,.0f} ₽</b>"
             f"<p>Обратиться в {len(unique_merchants(easy))} организаций: {short_list(easy)}. "
-            f"Tax Radar уже собрал оплаты и разбил их по организациям.</p></div></div>"
+            f"СделатьВычет уже собрал оплаты и разбил их по организациям.</p></div></div>"
         )
     if questions:
         n = 2 if easy else 1
@@ -1501,12 +1507,18 @@ def packet(payload: PacketPayload):
         extra_html = f"<div class='extra'><b>Можно попробовать вернуть ещё до {extra_increment:,.0f} ₽</b><p>Лекарства и другие расходы требуют больше документов. Их можно оставить на потом.</p></div>"
 
     html = f'''<!doctype html>
-<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Tax Radar — персональный пакет</title>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>СделатьВычет — персональный пакет</title>
 <style>
 :root{{--text:#111827;--muted:#667085;--line:#e5e9f0;--green:#07864c;--greenSoft:#eaf8f1;--brand:#3157e7;--bg:#f5f7fb}}
 *{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--text);font-family:Inter,Arial,sans-serif;line-height:1.45}}.page{{max-width:920px;margin:36px auto;padding:0 18px 60px}}.top{{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}}.brand{{font-size:20px;font-weight:900}}.brand i{{display:inline-grid;place-items:center;width:34px;height:34px;border-radius:11px;background:linear-gradient(145deg,#3157e7,#6c4df6);color:white;font-style:normal;margin-right:8px}}.source{{font-size:11px;color:var(--muted)}}.hero{{background:linear-gradient(135deg,#121a2f,#22265a);color:#fff;border-radius:24px;padding:28px;box-shadow:0 18px 50px rgba(28,39,60,.12)}}.hero small{{color:#bbc5d9}}.big{{font-size:44px;line-height:1;font-weight:950;letter-spacing:-.045em;margin:6px 0 10px}}.fast{{color:#b8f0d0;font-weight:800;font-size:13px}}h2{{font-size:21px;letter-spacing:-.025em;margin:26px 0 12px}}.action{{display:grid;grid-template-columns:40px 1fr;gap:12px;border:1px solid var(--line);border-radius:16px;padding:15px;margin:9px 0;background:#fff}}.n{{width:36px;height:36px;border-radius:11px;background:#eef2ff;color:#4452ce;display:grid;place-items:center;font-weight:900}}.action b{{font-size:14px}}.action p,.extra p{{color:var(--muted);font-size:12px;margin:4px 0 0}}.extra{{background:#fffaf0;border:1px solid #f0e0bb;border-radius:16px;padding:15px;margin:14px 0}}.extra b{{color:#896100}}.ops{{background:#fff;border:1px solid var(--line);border-radius:16px;overflow:hidden}}table{{width:100%;border-collapse:collapse}}td,th{{padding:10px 9px;border-bottom:1px solid #edf0f4;text-align:left;font-size:11px}}th{{font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:#7c8799}}.note{{background:#f8fafc;border:1px solid var(--line);padding:13px 14px;border-radius:13px;color:#6b7280;font-size:10px;line-height:1.5;margin-top:18px}}@media(max-width:600px){{.page{{margin-top:16px}}.big{{font-size:36px}}.hero{{padding:22px}}th:nth-child(1),td:nth-child(1){{display:none}}}}
 </style></head><body><div class="page">
-<div class="top"><div class="brand"><i>₽</i>Tax Radar</div><div class="source">Источник: {escape(payload.filename)}</div></div>
+<div class="top"><div class="brand">
+  <svg class="brandMark" viewBox="0 0 44 44" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="СделатьВычет">
+    <rect x="1" y="1" width="42" height="42" rx="13" fill="#B7FF2A"/>
+    <path d="M14 23.5L19.2 28.7L30 16.8" stroke="#142000" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  </svg>
+  <div class="brandWord"><b>СделатьВычет</b><span>Налоговый помощник</span></div>
+</div><div class="source">Источник: {escape(payload.filename)}</div></div>
 <div class="hero"><small>Ваш потенциальный возврат</small><div class="big">от {calc['refund_from']:,.0f} ₽</div><div class="fast">До {fast_calc['refund_from']:,.0f} ₽ — за {action_count or 1} простых действия</div></div>
 <h2>Быстрый путь</h2>{''.join(action_html) or '<p>Сначала выберите подходящие операции.</p>'}{extra_html}
 <h2>Все включённые операции</h2><div class="ops"><table><thead><tr><th>Дата</th><th>Категория</th><th>Организация</th><th>Сумма</th></tr></thead><tbody>{rows}</tbody></table></div>
@@ -1521,7 +1533,7 @@ INDEX_HTML = r'''<!doctype html>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <meta name="color-scheme" content="light"/>
-<title>Tax Radar — найдём ваш налоговый вычет</title>
+<title>СделатьВычет — найдём ваш налоговый вычет</title>
 <style>
 :root{
   --bg:#f6f6f3;
@@ -1619,6 +1631,7 @@ input[type=file]{display:none}
 .legalRow input{margin:2px 0 0;width:15px;height:15px;accent-color:#111;flex:0 0 auto}
 .legalRow a{color:#111;text-decoration:underline;text-underline-offset:2px}
 .legalMini{font-size:8px;color:#96968f;line-height:1.5;margin-top:1px}
+.pill{display:inline-flex;align-items:center;padding:7px 10px;border:1px solid var(--line);border-radius:999px;background:#fff;font-size:8px;color:#666;font-weight:800;text-transform:uppercase;letter-spacing:.06em}
 .legalFooter{margin-top:34px;padding:20px 0;border-top:1px solid var(--line);display:flex;gap:16px;flex-wrap:wrap;font-size:9px;color:#777}
 .legalFooter a{color:#555;text-decoration:none}.legalFooter a:hover{text-decoration:underline}
 
@@ -1839,14 +1852,14 @@ th{color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.06e
 <body>
 <div class="wrap">
   <header class="header">
-    <div class="brand"><span class="brandMark">₽</span>Tax Radar <span class="beta">LEGAL 1.9.1</span></div>
+    <div class="brand"><span class="brandMark">₽</span>СделатьВычет <span class="beta">SDELATVYCHET 2.1.1</span></div>
     <div class="secure"><span class="secureDot"></span>Файл не сохраняется после анализа</div>
   </header>
 
   <section class="hero">
     <div class="heroCopy">
       <div class="eyebrow"><span class="eyebrowDot"></span>Персональный поиск налоговых вычетов</div>
-      <h1>Найдём ваш налоговый вычет за 5 минут.</h1>
+      <h1>Вернём деньги, которые вы могли не забрать у государства.</h1>
       <p class="heroText">Загрузите банковскую выписку. Мы найдём потенциальные расходы для вычета, посчитаем консервативную сумму по 13% и сведём всё к нескольким понятным действиям.</p>
       <div class="heroActions">
         <label for="file" class="btn btnPrimary">Загрузить выписку <span>→</span></label>
@@ -1854,7 +1867,7 @@ th{color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.06e
       </div>
     </div>
     <div class="preview">
-      <div class="previewTop"><span>Результат</span><span class="previewPill">LEGAL 1.9.1</span></div>
+      <div class="previewTop"><span>Результат</span><span class="previewPill">SDELATVYCHET 2.1.1</span></div>
       <div class="previewLabel">Можно вернуть</div>
       <div class="previewMoney">от 20 208 ₽</div>
       <div class="previewFast"><i>✓</i>15 078 ₽ — за 2 простых действия</div>
@@ -1868,15 +1881,15 @@ th{color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.06e
   <section class="uploaderCard">
     <div class="uploaderHead">
       <div><h2>Проверить выписку</h2><p>Сейчас лучше всего поддерживается PDF Альфа-Банка. Для таблиц нужны дата, описание операции и сумма.</p></div>
-      <div class="formatPills"><span class="formatPill">PDF</span><span class="formatPill">CSV</span><span class="formatPill">XLSX</span></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 0"><span class="pill">До оплаты — бесплатно</span><span class="pill">Отчёт за 499 ₽</span><span class="pill">Данные не сохраняются как файл</span></div><div class="formatPills"><span class="formatPill">PDF</span><span class="formatPill">CSV</span><span class="formatPill">XLSX</span></div>
     </div>
     <label class="upload" id="drop">
       <input id="file" type="file" accept=".pdf,.csv,.xlsx,.xlsm"/>
       <div class="uploadLeft">
         <div class="uploadIcon">↥</div>
         <div class="uploadMeta">
-          <div class="uploadTitle" id="fname">Выберите банковскую выписку</div>
-          <div class="uploadSub" id="fileSub">PDF любого банка · также CSV / XLSX · до 30 МБ</div>
+          <div class="uploadTitle" id="fname">Загрузите банковскую выписку</div>
+          <div class="uploadSub" id="fileSub">Поддержка PDF крупнейших банков РФ · CSV / XLSX · безопасная загрузка</div>
         </div>
       </div>
       <span class="uploadPick" id="uploadPick">Выбрать файл</span>
@@ -1897,7 +1910,7 @@ th{color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.06e
     </div>
 
     <div class="uploadBottom">
-      <button class="btn btnBrand" id="analyze" disabled>Найти вычеты</button>
+      <button class="btn btnBrand" id="analyze" disabled>Найти, где мои деньги</button>
       <span class="parser" id="parserHint">Файл передаётся по HTTPS и не сохраняется приложением</span>
     </div>
     <div class="loader" id="loader">
@@ -1911,8 +1924,8 @@ th{color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.06e
     <div class="summaryCard">
       <div class="summaryTop">
         <div class="summaryBadge"><i>✓</i>Анализ готов</div>
-        <div class="summaryTitle">Мы нашли деньги, которые потенциально можно вернуть</div>
-        <div class="summarySub">До оплаты показываем только итог анализа — детали остаются закрыты.</div>
+        <div class="summaryTitle">Мы нашли расходы, которые можно превратить в возврат</div>
+        <div class="summarySub">Сначала бесплатно покажем найденную сумму. После оплаты откроем детали и готовый план действий.</div>
         <div class="summaryNumbers">
           <div class="summaryNumber"><span>Нашли подходящих расходов</span><b id="summaryExpenses">—</b></div>
           <div class="summaryNumber"><span>Потенциальный возврат</span><b id="summaryRefund">—</b></div>
@@ -1921,9 +1934,9 @@ th{color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.06e
       </div>
       <div class="paywall">
         <div>
-          <div class="paywallLabel">Полный персональный отчёт</div>
-          <div class="paywallTitle">Что именно нашли и как вернуть деньги</div>
-          <div class="paywallText">Откроем операции и категории, сгруппируем организации, подготовим готовые запросы и покажем короткий план действий.</div>
+          <div class="paywallLabel">Полный отчёт</div>
+          <div class="paywallTitle">Откроем, где именно лежат ваши деньги</div>
+          <div class="paywallText">Покажем найденные операции, соберём организации по категориям, подготовим тексты запросов и дадим пошаговый маршрут до подачи вычета.</div>
         </div>
         <div>
           <div class="paywallPrice"><div class="price">499 ₽</div><button class="payBtn" id="payBtn">Получить отчёт</button></div>
@@ -1954,7 +1967,7 @@ th{color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.06e
 
       <div class="resultBody">
         <div class="sectionTitleRow">
-          <div><h2>Что Tax Radar подготовил</h2><p id="actionLead">Готовые запросы и уточнения по найденным расходам.</p></div>
+          <div><h2>Что СделатьВычет подготовил</h2><p id="actionLead">Готовые запросы и уточнения по найденным расходам.</p></div>
           <div class="tiny" id="foundLabel"></div>
         </div>
         <div class="groups" id="groups"></div>
@@ -1962,8 +1975,8 @@ th{color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.06e
         <section class="journey" id="journey">
           <div class="journeyHero">
             <div>
-              <div class="journeyEyebrow">Персональный маршрут</div>
-              <h2>Как дойти от отчёта до вычета</h2>
+              <div class="journeyEyebrow">Ваш план возврата</div>
+              <h2>Как получить деньги шаг за шагом</h2>
               <p id="journeyIntro">Мы превратили найденные расходы в три понятных шага. Начните с организаций, у которых нужно получить подтверждения.</p>
             </div>
             <div class="journeyMoney"><span>Ваш ориентир</span><b id="journeyRefund">—</b></div>
@@ -1974,7 +1987,7 @@ th{color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.06e
         </section>
 
         <div class="sectionTitleRow" style="margin-top:28px">
-          <div><h2>Детали отчёта</h2><p>Здесь можно проверить операции, подготовить запросы и скорректировать расчёт.</p></div>
+          <div><h2>Подробности отчёта</h2><p>Здесь можно проверить операции, подготовить запросы и скорректировать расчёт.</p></div>
         </div>
         <div class="actions" id="actions"></div>
 
@@ -2003,7 +2016,7 @@ th{color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.06e
           </div>
         </details>
 
-        <div class="disclaimer">Расчёт является ориентиром: Tax Radar использует базовые 13% и консервативный общий социальный лимит 150 000 ₽ на год. Фактическое право на вычет и сумма зависят от подтверждающих документов и уплаченного НДФЛ.</div>
+        <div class="disclaimer">Расчёт является ориентиром: СделатьВычет использует базовые 13% и консервативный общий социальный лимит 150 000 ₽ на год. Фактическое право на вычет и сумма зависят от подтверждающих документов и уплаченного НДФЛ.</div>
         <div class="footer" id="footer"></div>
       </div>
     </div>
@@ -2013,7 +2026,7 @@ th{color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.06e
     <a href="/terms">Пользовательское соглашение</a>
     <a href="/privacy">Персональные данные</a>
     <a href="/consent">Согласие на обработку ПДн</a>
-    <span>Оператор: Колосов Роман Михайлович · НПД · ИНН 772072450119</span>
+    <span>СделатьВычет · оператор: Колосов Роман Михайлович · НПД · ИНН 772072450119</span>
     <a href="mailto:inbox@sdelatvychet.ru">inbox@sdelatvychet.ru</a>
   </footer>
 </div>
@@ -2063,7 +2076,7 @@ analyze.onclick=async()=>{
     const data=await r.json();
     if(!r.ok)throw new Error(data.detail||'Ошибка анализа');
     analysisId=data.analysis_id;
-    localStorage.setItem('taxRadarAnalysisId',analysisId);
+    localStorage.setItem('sdelatVychetAnalysisId',analysisId);
     showSummary(data);
   }catch(e){
     const er=document.getElementById('error');er.textContent=e.message;er.style.display='block'
@@ -2136,7 +2149,7 @@ async function unlockReport(){
 async function resumeAfterPayment(){
   const params=new URLSearchParams(window.location.search);
   const fromUrl=params.get('analysis');
-  analysisId=fromUrl||localStorage.getItem('taxRadarAnalysisId');
+  analysisId=fromUrl||localStorage.getItem('sdelatVychetAnalysisId');
   if(!analysisId)return;
   if(params.get('payment')==='return'||params.get('paid')==='1'){
     document.getElementById('summary').style.display='block';
@@ -2149,7 +2162,7 @@ window.addEventListener('DOMContentLoaded',resumeAfterPayment);
 
 
 const FNS_LK_URL='https://lkfl2.nalog.ru/lkfl/';
-const GUIDE_STORAGE_PREFIX='taxRadarGuide:';
+const GUIDE_STORAGE_PREFIX='sdelatVychetGuide:';
 
 function guideStorageKey(){
   return GUIDE_STORAGE_PREFIX+(analysisId||'demo');
@@ -2185,7 +2198,7 @@ function categoryDoc(category){
 }
 function requestTextFor(arr){
   const c=arr[0],year=c.year,dates=arr.map(x=>x.date+' — '+rub(x.amount)).join('; ');
-  if(c.category==='medicine')return `Здравствуйте! Прошу направить в ФНС сведения о моих расходах на медицинские услуги за ${year} год для получения социального налогового вычета. Если электронная передача в ФНС невозможна, прошу выдать справку об оплате медицинских услуг для налогового органа (КНД 1151156). Найденные мной оплаты: ${dates}.`;
+  if(c.category==='medicine')return `Здравствуйте! Прошу направить в ФНС сведения о моих расходах на медицинские услуги за ${year} год для получения социального налогового вычета. Если электронная передача в ФНС невозможна, прошу выдать справку об оплате медицинских услуг для налогового органа (КНД 1151156). Найденные оплаты: ${dates}.`;
   if(c.category==='fitness')return `Здравствуйте! Прошу направить в ФНС сведения о моих расходах на физкультурно-оздоровительные услуги за ${year} год для получения социального налогового вычета. Если электронная передача невозможна, прошу выдать справку для налогового органа (КНД 1151160). Найденные оплаты: ${dates}.`;
   if(c.category==='education')return `Здравствуйте! Прошу направить в ФНС сведения о расходах на обучение за ${year} год для получения социального налогового вычета. Если электронная передача невозможна, прошу выдать справку для налогового органа (КНД 1151158). Найденные оплаты: ${dates}.`;
   if(c.category==='insurance')return `Здравствуйте! Прошу сообщить вид договора и, если он даёт право на социальный налоговый вычет, направить в ФНС сведения об уплаченных страховых взносах за ${year} год. Если электронная передача невозможна, прошу выдать справку для налогового органа (КНД 1151159). Найденные оплаты: ${dates}.`;
@@ -2230,7 +2243,7 @@ function renderJourney(){
         </div>
 
         <div class="guideDesc">
-          Tax Radar уже нашёл подходящие платежи. Ниже — конкретные организации,
+          СделатьВычет уже нашёл подходящие платежи. Ниже — конкретные организации,
           суммы и готовые запросы. Вам не нужно искать, кому и что писать.
         </div>
 
@@ -2357,7 +2370,7 @@ function buildBatch(items){
 function renderActions(){
   const s=selected(),easy=s.filter(c=>['medicine','fitness','education'].includes(c.category)),questions=s.filter(c=>c.category==='insurance'),extras=s.filter(c=>['pharmacy','donation'].includes(c.category));
   const fast=[...easy,...questions],total=subsetRefund(s),fastR=subsetRefund(fast),extra=Math.max(0,total-fastR);let count=0,html='';
-  if(easy.length){count++;const merchants=uniq(easy),easyR=subsetRefund(easy);html+=`<div class="actionCard"><div class="actionNo">${count}</div><div><div class="actionName">Получить справки одним пакетом</div><div class="actionDesc">${merchants.length} организаций, ${easy.length} найденных оплат. Tax Radar уже сгруппировал, кому и что запросить.</div><button class="actionBtn" onclick="toggleBatch()">Подготовить все запросы</button><div class="batch" id="batch">${buildBatch(easy)}</div></div><div class="actionMoney">от ${rub(easyR)}</div></div>`}
+  if(easy.length){count++;const merchants=uniq(easy),easyR=subsetRefund(easy);html+=`<div class="actionCard"><div class="actionNo">${count}</div><div><div class="actionName">Получить справки одним пакетом</div><div class="actionDesc">${merchants.length} организаций, ${easy.length} найденных оплат. СделатьВычет уже сгруппировал, кому и что запросить.</div><button class="actionBtn" onclick="toggleBatch()">Подготовить все запросы</button><div class="batch" id="batch">${buildBatch(easy)}</div></div><div class="actionMoney">от ${rub(easyR)}</div></div>`}
   if(questions.length){count++;const merchants=uniq(questions),qR=subsetRefund(questions);let qhtml='';merchants.forEach(m=>{const related=questions.filter(c=>c.merchant===m);qhtml+=`<div class="qrow"><b>${escapeHtml(m)}</b><select onchange='insuranceAnswer(this,${JSON.stringify(related.map(x=>x.id))})'><option value="">Что это за страховка?</option><option value="keep">Жизнь / ДМС / подходящий договор</option><option value="drop">ОСАГО / каско / другое</option></select></div>`});html+=`<div class="actionCard"><div class="actionNo">${count}</div><div><div class="actionName">Ответить на ${merchants.length} коротких вопрос${merchants.length===1?'':'а'}</div><div class="actionDesc">Не нужно разбираться в договорах заранее — просто укажите тип найденной страховки.</div><button class="actionBtn" onclick="toggleQuestions()">Ответить</button><div class="questionBox" id="questionBox">${qhtml}</div></div><div class="actionMoney">до ${rub(qR)}</div></div>`}
   document.getElementById('actions').innerHTML=html||'<div class="actionCard"><div class="actionNo">✓</div><div><div class="actionName">Основной план уже готов</div><div class="actionDesc">Осталось проверить дополнительные расходы или скачать пакет.</div></div></div>';
   document.getElementById('refund').innerHTML='<span class="from">от</span>'+rub(total);document.getElementById('fastRefund').textContent='от '+rub(fastR);document.getElementById('fastText').textContent=count?`${fastR?Math.round(fastR/Math.max(total,1)*100):0}% найденного возврата — за ${count} ${count===1?'действие':'действия'}.`:'Сначала проверьте найденные операции.';document.getElementById('actionLead').textContent=count?`Вместо ${s.length} отдельных операций — всего ${count} ${count===1?'действие':'действия'}.`:'Сложные расходы вынесены отдельно.';
