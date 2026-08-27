@@ -22,7 +22,7 @@ from fastapi import FastAPI, File, UploadFile, HTTPException, Request, Form
 from fastapi.responses import HTMLResponse, JSONResponse, Response, RedirectResponse
 from pydantic import BaseModel
 
-app = FastAPI(title="СделатьВычет", version="2.4.0")
+app = FastAPI(title="СделатьВычет", version="2.4.1")
 
 
 REPORT_PRICE_RUB = 499
@@ -435,8 +435,7 @@ def privacy_html() -> str:
       В аналитическую базу не записываются названия продавцов, описания банковских
       операций, номера счетов/карт и точные суммы отдельных транзакций.</p>
       <p>Яндекс Метрика подключается только после отдельного разрешения пользователя.
-      Вебвизор отключён. В Метрику передаются только стандартные просмотры и названия
-      продуктовых целей без содержимого банковской выписки.</p>
+      Вебвизор, карта кликов и отслеживание ссылок отключены. В Метрику передаются только обезличенные просмотры страниц с URL без query-параметров и названия продуктовых целей без содержимого банковской выписки.</p>
 
       <h2>11. Безопасность и минимизация</h2>
       <p>Оператор применяет принцип минимизации: не хранит исходный PDF после анализа,
@@ -1566,7 +1565,7 @@ def analytics_dashboard():
 
 @app.get("/health")
 def health():
-    return {"ok": True, "version": "2.4.0", "legal_ready": legal_ready(), "service": "СделатьВычет", "metrika_configured": bool(METRIKA_COUNTER_ID), "analytics_db": bool(ANALYTICS_DB_PATH)}
+    return {"ok": True, "version": "2.4.1", "legal_ready": legal_ready(), "service": "СделатьВычет", "metrika_configured": bool(METRIKA_COUNTER_ID), "analytics_db": bool(ANALYTICS_DB_PATH)}
 
 
 @app.post("/api/analyze")
@@ -2418,7 +2417,7 @@ th{color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.06e
       </div>
     </div>
     <div class="preview">
-      <div class="previewTop"><span>Результат</span><span class="previewPill">SDELATVYCHET 2.4.0</span></div>
+      <div class="previewTop"><span>Результат</span><span class="previewPill">SDELATVYCHET 2.4.1</span></div>
       <div class="previewLabel">Потенциальный вычет</div>
       <div class="previewMoney">от 20 208 ₽</div>
       <div class="previewFast"><i>✓</i>Сразу покажем, где искать вычет</div>
@@ -2598,6 +2597,7 @@ th{color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.06e
   </section>
 
   <footer class="legalFooter">
+    <button type="button" id="analyticsSettingsBtn" style="border:0;background:none;padding:0;color:inherit;text-decoration:underline;cursor:pointer;font:inherit">Настройки аналитики</button>
     <a href="/terms">Пользовательское соглашение</a>
     <a href="/privacy">Персональные данные</a>
     <a href="/consent">Согласие на обработку ПДн</a>
@@ -2653,19 +2653,43 @@ function sensitiveReturnUrl(){
   return q.has('analysis')||q.has('payment')||q.has('paid');
 }
 function metrikaAllowed(){return localStorage.getItem(ANALYTICS_CONSENT_KEY)==='yes'}
+function sanitizedMetrikaUrl(){
+  return location.origin+location.pathname;
+}
 function loadMetrika(){
-  if(!METRIKA_COUNTER_ID||!metrikaAllowed()||sensitiveReturnUrl()||window.__svMetrikaLoaded)return;
+  if(!METRIKA_COUNTER_ID||!metrikaAllowed()||window.__svMetrikaLoaded)return;
   window.__svMetrikaLoaded=true;
-  window.ym=window.ym||function(){(ym.a=ym.a||[]).push(arguments)};ym.l=1*new Date();
-  const s=document.createElement('script');s.async=true;s.src='https://mc.yandex.ru/metrika/tag.js?id='+METRIKA_COUNTER_ID;
+  window.ym=window.ym||function(){(window.ym.a=window.ym.a||[]).push(arguments)};
+  window.ym.l=1*new Date();
+  const s=document.createElement('script');
+  s.async=true;
+  s.src='https://mc.yandex.ru/metrika/tag.js?id='+METRIKA_COUNTER_ID;
   document.head.appendChild(s);
-  ym(METRIKA_COUNTER_ID,'init',{ssr:true,webvisor:false,clickmap:true,trackLinks:true,accurateTrackBounce:true,sendTitle:false});
+  ym(METRIKA_COUNTER_ID,'init',{
+    ssr:true,
+    webvisor:false,
+    clickmap:false,
+    trackLinks:false,
+    accurateTrackBounce:true,
+    sendTitle:false,
+    url:sanitizedMetrikaUrl()
+  });
 }
 function metrikaGoal(event){
-  if(METRIKA_COUNTER_ID&&metrikaAllowed()&&!sensitiveReturnUrl()&&typeof window.ym==='function'){
+  if(METRIKA_COUNTER_ID&&metrikaAllowed()&&typeof window.ym==='function'){
     try{ym(METRIKA_COUNTER_ID,'reachGoal',event)}catch(e){}
   }
 }
+window.sdelatVychetAnalyticsStatus=function(){
+  return {
+    counterId:METRIKA_COUNTER_ID,
+    consent:localStorage.getItem(ANALYTICS_CONSENT_KEY),
+    metrikaLoaded:!!window.__svMetrikaLoaded,
+    ymAvailable:typeof window.ym==='function',
+    sanitizedUrl:sanitizedMetrikaUrl()
+  };
+};
+
 function track(event){
   const body={event,session_id:analyticsSessionId,...attribution};
   try{
@@ -2676,8 +2700,13 @@ function track(event){
 function initAnalyticsConsent(){
   const box=document.getElementById('analyticsConsent');
   if(!box)return;
+  const settingsBtn=document.getElementById('analyticsSettingsBtn');
+  if(settingsBtn)settingsBtn.onclick=()=>{
+    localStorage.removeItem(ANALYTICS_CONSENT_KEY);
+    box.classList.add('show');
+  };
   const choice=localStorage.getItem(ANALYTICS_CONSENT_KEY);
-  if(METRIKA_COUNTER_ID&&!choice&&!sensitiveReturnUrl())box.classList.add('show');
+  if(METRIKA_COUNTER_ID&&!choice)box.classList.add('show');
   if(choice==='yes')loadMetrika();
   document.getElementById('allowAnalytics').onclick=()=>{localStorage.setItem(ANALYTICS_CONSENT_KEY,'yes');box.classList.remove('show');loadMetrika()};
   document.getElementById('denyAnalytics').onclick=()=>{localStorage.setItem(ANALYTICS_CONSENT_KEY,'no');box.classList.remove('show')};
@@ -2747,6 +2776,7 @@ analyze.onclick=async()=>{
     if(!r.ok)throw new Error(data.detail||'Ошибка анализа');
     analysisId=data.analysis_id;
     localStorage.setItem('sdelatVychetAnalysisId',analysisId);
+    metrikaGoal('analysis_success');
     showSummary(data);
   }catch(e){
     track('analysis_error');
@@ -2819,7 +2849,9 @@ async function unlockReport(){
     const report=await rr.json();
     if(!rr.ok)throw new Error(report.detail||'Не удалось открыть отчёт');
     result=report; result.paid_unlocked=true;
-    metrikaGoal('payment_success');metrikaGoal('report_view');
+    loadMetrika();
+    metrikaGoal('payment_success');
+    metrikaGoal('report_view');
     document.getElementById('summary').style.display='none';
     render();
     const sb=document.getElementById('successBanner'); if(sb) sb.classList.add('show');
