@@ -12,6 +12,7 @@ import base64
 import urllib.request
 import urllib.error
 import hmac
+import sqlite3
 from collections import defaultdict
 from datetime import datetime
 from html import escape
@@ -21,7 +22,7 @@ from fastapi import FastAPI, File, UploadFile, HTTPException, Request, Form
 from fastapi.responses import HTMLResponse, JSONResponse, Response, RedirectResponse
 from pydantic import BaseModel
 
-app = FastAPI(title="СделатьВычет", version="2.3.1")
+app = FastAPI(title="СделатьВычет", version="2.4.0")
 
 
 REPORT_PRICE_RUB = 499
@@ -49,6 +50,164 @@ CONSENT_VERSION = "2026-08-27-v1"
 # Аудит согласий. Для production путь должен находиться на постоянном диске/БД.
 CONSENT_AUDIT_PATH = os.getenv("CONSENT_AUDIT_PATH", "data/consent_audit.jsonl").strip()
 CONSENT_AUDIT_SECRET = os.getenv("CONSENT_AUDIT_SECRET", "").strip()
+
+
+# Product analytics.
+# No merchant names, transaction descriptions, exact transaction sums, account
+# numbers or report contents are written to this database.
+METRIKA_COUNTER_ID = os.getenv("METRIKA_COUNTER_ID", "").strip()
+ANALYTICS_DB_PATH = os.getenv(
+    "ANALYTICS_DB_PATH",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "analytics.sqlite3"),
+).strip()
+ANALYTICS_DASHBOARD_TOKEN = os.getenv("ANALYTICS_DASHBOARD_TOKEN", "").strip()
+
+ANALYTICS_EVENTS = {
+    "visit",
+    "upload_click",
+    "file_selected",
+    "analysis_started",
+    "analysis_success",
+    "analysis_error",
+    "result_view",
+    "paywall_view",
+    "payment_click",
+    "payment_created",
+    "payment_success",
+    "payment_error",
+    "report_view",
+    "guide_step_1",
+    "guide_step_2",
+    "guide_step_3",
+    "guide_complete",
+}
+
+def _analytics_connect():
+    path = os.path.abspath(ANALYTICS_DB_PATH)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    con = sqlite3.connect(path, timeout=5)
+    con.row_factory = sqlite3.Row
+    return con
+
+def init_analytics_db():
+    try:
+        with _analytics_connect() as con:
+            con.execute("PRAGMA journal_mode=WAL")
+            con.execute("""
+                CREATE TABLE IF NOT EXISTS analytics_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at TEXT NOT NULL,
+                    session_id TEXT NOT NULL,
+                    event TEXT NOT NULL,
+                    utm_source TEXT,
+                    utm_medium TEXT,
+                    utm_campaign TEXT,
+                    utm_content TEXT,
+                    utm_term TEXT,
+                    referrer_host TEXT,
+                    bank TEXT,
+                    parser TEXT,
+                    candidate_bucket TEXT,
+                    refund_bucket TEXT,
+                    payment_amount INTEGER,
+                    dedupe_key TEXT UNIQUE
+                )
+            """)
+            con.execute("CREATE INDEX IF NOT EXISTS idx_analytics_event_time ON analytics_events(event, created_at)")
+            con.execute("CREATE INDEX IF NOT EXISTS idx_analytics_session ON analytics_events(session_id)")
+            con.execute("CREATE INDEX IF NOT EXISTS idx_analytics_source ON analytics_events(utm_source)")
+            con.commit()
+    except Exception:
+        # Analytics must never prevent the tax service itself from working.
+        return False
+    return True
+
+def clean_analytics_value(value: Any, max_len: int = 120) -> str:
+    s = str(value or "").strip()
+    s = re.sub(r"[\x00-\x1f\x7f]", "", s)
+    return s[:max_len]
+
+def valid_session_id(value: str) -> bool:
+    return bool(re.fullmatch(r"[a-zA-Z0-9_-]{16,80}", value or ""))
+
+def candidate_bucket(n: int) -> str:
+    if n <= 0: return "0"
+    if n <= 2: return "1-2"
+    if n <= 5: return "3-5"
+    if n <= 10: return "6-10"
+    if n <= 20: return "11-20"
+    return "21+"
+
+def refund_bucket(value: float) -> str:
+    v = float(value or 0)
+    if v <= 0: return "0"
+    if v < 3000: return "<3k"
+    if v < 10000: return "3-10k"
+    if v < 20000: return "10-20k"
+    if v < 50000: return "20-50k"
+    return "50k+"
+
+def record_analytics_event(
+    *,
+    event: str,
+    session_id: str,
+    attribution: dict[str, Any] | None = None,
+    bank: str = "",
+    parser: str = "",
+    candidate_count: int | None = None,
+    refund_value: float | None = None,
+    payment_amount: int | None = None,
+    dedupe_key: str | None = None,
+) -> bool:
+    if event not in ANALYTICS_EVENTS or not valid_session_id(session_id):
+        return False
+    a = attribution or {}
+    row = (
+        datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
+        session_id,
+        event,
+        clean_analytics_value(a.get("utm_source"), 80),
+        clean_analytics_value(a.get("utm_medium"), 80),
+        clean_analytics_value(a.get("utm_campaign"), 120),
+        clean_analytics_value(a.get("utm_content"), 120),
+        clean_analytics_value(a.get("utm_term"), 120),
+        clean_analytics_value(a.get("referrer_host"), 120),
+        clean_analytics_value(bank, 60),
+        clean_analytics_value(parser, 120),
+        candidate_bucket(candidate_count) if candidate_count is not None else "",
+        refund_bucket(refund_value) if refund_value is not None else "",
+        int(payment_amount) if payment_amount is not None else None,
+        clean_analytics_value(dedupe_key, 180) if dedupe_key else None,
+    )
+    try:
+        with _analytics_connect() as con:
+            con.execute("""
+                INSERT OR IGNORE INTO analytics_events (
+                    created_at, session_id, event,
+                    utm_source, utm_medium, utm_campaign, utm_content, utm_term,
+                    referrer_host, bank, parser, candidate_bucket, refund_bucket,
+                    payment_amount, dedupe_key
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, row)
+            con.commit()
+        return True
+    except Exception:
+        return False
+
+def analytics_attribution_from_form(
+    utm_source: str = "", utm_medium: str = "", utm_campaign: str = "",
+    utm_content: str = "", utm_term: str = "", referrer_host: str = "",
+) -> dict[str, str]:
+    return {
+        "utm_source": clean_analytics_value(utm_source, 80),
+        "utm_medium": clean_analytics_value(utm_medium, 80),
+        "utm_campaign": clean_analytics_value(utm_campaign, 120),
+        "utm_content": clean_analytics_value(utm_content, 120),
+        "utm_term": clean_analytics_value(utm_term, 120),
+        "referrer_host": clean_analytics_value(referrer_host, 120),
+    }
+
+init_analytics_db()
 
 
 def operator_address_display() -> str:
@@ -269,7 +428,17 @@ def privacy_html() -> str:
       уточнения, блокирования или уничтожения при наличии предусмотренных законом оснований,
       а также отозвать согласие. Запрос направляется на {escape(OPERATOR_EMAIL)}.</p>
 
-      <h2>10. Безопасность и минимизация</h2>
+      <h2>10. Аналитика использования сервиса</h2>
+      <p>Для оценки продуктовой воронки сервис ведёт собственную first-party аналитику:
+      анонимный идентификатор сессии, UTM-метки, домен-источник и события интерфейса
+      (например, выбор файла, успешный анализ, переход к оплате и открытие отчёта).
+      В аналитическую базу не записываются названия продавцов, описания банковских
+      операций, номера счетов/карт и точные суммы отдельных транзакций.</p>
+      <p>Яндекс Метрика подключается только после отдельного разрешения пользователя.
+      Вебвизор отключён. В Метрику передаются только стандартные просмотры и названия
+      продуктовых целей без содержимого банковской выписки.</p>
+
+      <h2>11. Безопасность и минимизация</h2>
       <p>Оператор применяет принцип минимизации: не хранит исходный PDF после анализа,
       не получает реквизиты платёжной карты, не использует данные выписки для рекламы,
       а технические сетевые идентификаторы в журнале согласий сохраняются в виде хэшей.</p>
@@ -1211,9 +1380,13 @@ def analyze_transactions(txs: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def render_index_html() -> str:
+    counter = METRIKA_COUNTER_ID if METRIKA_COUNTER_ID.isdigit() else "0"
+    return INDEX_HTML.replace("__METRIKA_COUNTER_ID__", counter)
+
 @app.get("/", response_class=HTMLResponse)
 def index():
-    return HTMLResponse(INDEX_HTML)
+    return HTMLResponse(render_index_html())
 
 
 @app.get("/terms", response_class=HTMLResponse)
@@ -1243,9 +1416,157 @@ def legal_status():
     }
 
 
+
+class AnalyticsEventPayload(BaseModel):
+    event: str
+    session_id: str
+    utm_source: str = ""
+    utm_medium: str = ""
+    utm_campaign: str = ""
+    utm_content: str = ""
+    utm_term: str = ""
+    referrer_host: str = ""
+
+@app.post("/api/analytics/event")
+def analytics_event(payload: AnalyticsEventPayload):
+    if payload.event not in ANALYTICS_EVENTS:
+        raise HTTPException(400, "Unknown analytics event.")
+    if not valid_session_id(payload.session_id):
+        raise HTTPException(400, "Invalid session.")
+    record_analytics_event(
+        event=payload.event,
+        session_id=payload.session_id,
+        attribution=analytics_attribution_from_form(
+            payload.utm_source, payload.utm_medium, payload.utm_campaign,
+            payload.utm_content, payload.utm_term, payload.referrer_host,
+        ),
+    )
+    return {"ok": True}
+
+def require_analytics_token(request: Request):
+    if not ANALYTICS_DASHBOARD_TOKEN:
+        raise HTTPException(503, "Analytics dashboard token is not configured.")
+    supplied = request.headers.get("x-analytics-token", "")
+    if not hmac.compare_digest(supplied, ANALYTICS_DASHBOARD_TOKEN):
+        raise HTTPException(401, "Unauthorized.")
+
+@app.get("/api/analytics/summary")
+def analytics_summary(request: Request, days: int = 30):
+    require_analytics_token(request)
+    days = max(1, min(int(days), 3650))
+    start_ts = datetime.utcfromtimestamp(time.time() - days * 86400).replace(microsecond=0).isoformat() + "Z"
+    with _analytics_connect() as con:
+        event_rows = con.execute("""
+            SELECT event, COUNT(DISTINCT session_id) AS sessions, COUNT(*) AS events
+            FROM analytics_events
+            WHERE created_at >= ?
+            GROUP BY event
+        """, (start_ts,)).fetchall()
+        source_rows = con.execute("""
+            SELECT
+                CASE WHEN utm_source IS NULL OR utm_source='' THEN 'direct' ELSE utm_source END AS source,
+                COUNT(DISTINCT CASE WHEN event='visit' THEN session_id END) AS visits,
+                COUNT(DISTINCT CASE WHEN event='analysis_success' THEN session_id END) AS analyses,
+                COUNT(DISTINCT CASE WHEN event='result_view' THEN session_id END) AS results,
+                COUNT(DISTINCT CASE WHEN event='payment_success' THEN session_id END) AS paid_sessions,
+                SUM(CASE WHEN event='payment_success' THEN COALESCE(payment_amount,0) ELSE 0 END) AS revenue
+            FROM analytics_events
+            WHERE created_at >= ?
+            GROUP BY source
+            ORDER BY revenue DESC, paid_sessions DESC, visits DESC
+        """, (start_ts,)).fetchall()
+        payments = con.execute("""
+            SELECT COUNT(*) AS payments, COALESCE(SUM(payment_amount),0) AS revenue
+            FROM analytics_events
+            WHERE created_at >= ? AND event='payment_success'
+        """, (start_ts,)).fetchone()
+        errors = con.execute("""
+            SELECT parser, bank, COUNT(*) AS errors
+            FROM analytics_events
+            WHERE created_at >= ? AND event='analysis_error'
+            GROUP BY parser, bank
+            ORDER BY errors DESC
+            LIMIT 20
+        """, (start_ts,)).fetchall()
+
+    events = {r["event"]: {"sessions": r["sessions"], "events": r["events"]} for r in event_rows}
+    return {
+        "days": days,
+        "from": start_ts,
+        "events": events,
+        "payments": {"count": payments["payments"], "revenue": payments["revenue"]},
+        "sources": [dict(r) for r in source_rows],
+        "analysis_errors": [dict(r) for r in errors],
+    }
+
+def analytics_dashboard_html() -> str:
+    return r"""<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Аналитика — СделатьВычет</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f6f6f3;color:#111;font-family:Inter,system-ui,-apple-system,sans-serif}
+.wrap{max-width:1180px;margin:0 auto;padding:32px 20px 70px}.top{display:flex;justify-content:space-between;gap:20px;align-items:center;margin-bottom:26px}
+h1{margin:0;font-size:34px;letter-spacing:-.05em}.muted{color:#777;font-size:12px}.auth{display:flex;gap:8px}
+input,select,button{font:inherit;border:1px solid #ddd;border-radius:9px;padding:10px;background:#fff}button{background:#111;color:#fff;font-weight:750;cursor:pointer}
+.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.card{background:#fff;border:1px solid #e3e3dd;border-radius:14px;padding:17px}
+.card span{font-size:9px;color:#777;text-transform:uppercase;letter-spacing:.08em;font-weight:800}.card b{display:block;font-size:27px;margin-top:8px;letter-spacing:-.045em}
+.section{background:#fff;border:1px solid #e3e3dd;border-radius:16px;margin-top:14px;padding:20px}h2{font-size:18px;margin:0 0 14px}
+.funnel{display:grid;grid-template-columns:repeat(7,1fr);gap:8px}.step{background:#f7f7f2;border-radius:10px;padding:12px}.step b{display:block;font-size:19px}.step span{font-size:9px;color:#777}
+table{width:100%;border-collapse:collapse;font-size:11px}th,td{text-align:left;padding:10px;border-bottom:1px solid #eee}th{color:#777;font-size:9px;text-transform:uppercase;letter-spacing:.06em}
+.good{color:#287a48}.warn{color:#9a6b12}.error{color:#bd3a32}
+@media(max-width:850px){.cards{grid-template-columns:1fr 1fr}.funnel{grid-template-columns:1fr 1fr}table{min-width:680px}.tableWrap{overflow:auto}.top{align-items:flex-start;flex-direction:column}}
+</style></head><body><div class="wrap">
+<div class="top"><div><h1>СделатьВычет · аналитика</h1><div class="muted">First-party воронка. Без merchant names и содержимого банковских операций.</div></div>
+<div class="auth"><select id="days"><option value="7">7 дней</option><option value="30" selected>30 дней</option><option value="90">90 дней</option><option value="365">365 дней</option></select><input id="token" type="password" placeholder="Analytics token"><button onclick="load()">Открыть</button></div></div>
+<div id="status" class="muted">Введите ANALYTICS_DASHBOARD_TOKEN.</div>
+<div id="app" style="display:none">
+<div class="cards">
+<div class="card"><span>Визиты</span><b id="visits">—</b></div>
+<div class="card"><span>Успешные анализы</span><b id="analyses">—</b></div>
+<div class="card"><span>Оплаты</span><b id="payments">—</b></div>
+<div class="card"><span>Выручка</span><b id="revenue">—</b></div>
+</div>
+<div class="section"><h2>Воронка</h2><div class="funnel" id="funnel"></div></div>
+<div class="section"><h2>Конверсии</h2><div class="cards">
+<div class="card"><span>Visit → Analysis</span><b id="crVA">—</b></div>
+<div class="card"><span>Result → Pay</span><b id="crRP">—</b></div>
+<div class="card"><span>Visit → Pay</span><b id="crVP">—</b></div>
+<div class="card"><span>Средний платёж</span><b id="avgPay">—</b></div>
+</div></div>
+<div class="section"><h2>Источники</h2><div class="tableWrap"><table><thead><tr><th>Источник</th><th>Визиты</th><th>Анализы</th><th>Результаты</th><th>Оплаты</th><th>CR visit→pay</th><th>Выручка</th></tr></thead><tbody id="sources"></tbody></table></div></div>
+</div></div>
+<script>
+const f=n=>new Intl.NumberFormat('ru-RU').format(n||0),rub=n=>f(n)+' ₽',pct=(a,b)=>b?((a/b)*100).toFixed(1)+'%':'0%';
+function ev(d,n){return d.events?.[n]?.sessions||0}
+async function load(){
+ const token=document.getElementById('token').value.trim(),days=document.getElementById('days').value;
+ sessionStorage.setItem('sv_analytics_token',token);
+ const st=document.getElementById('status');st.textContent='Загружаю…';
+ try{
+  const r=await fetch('/api/analytics/summary?days='+days,{headers:{'X-Analytics-Token':token}});
+  const d=await r.json();if(!r.ok)throw new Error(d.detail||'Ошибка');
+  document.getElementById('app').style.display='block';st.textContent='Период: последние '+d.days+' дней';
+  const visits=ev(d,'visit'),analyses=ev(d,'analysis_success'),results=ev(d,'result_view'),pays=ev(d,'payment_success');
+  document.getElementById('visits').textContent=f(visits);document.getElementById('analyses').textContent=f(analyses);
+  document.getElementById('payments').textContent=f(d.payments.count);document.getElementById('revenue').textContent=rub(d.payments.revenue);
+  const steps=[['Визит','visit'],['Выбор файла','file_selected'],['Анализ','analysis_success'],['Результат','result_view'],['Нажал купить','payment_click'],['Оплатил','payment_success'],['Открыл отчёт','report_view']];
+  document.getElementById('funnel').innerHTML=steps.map(x=>`<div class="step"><b>${f(ev(d,x[1]))}</b><span>${x[0]}</span></div>`).join('');
+  document.getElementById('crVA').textContent=pct(analyses,visits);document.getElementById('crRP').textContent=pct(pays,results);document.getElementById('crVP').textContent=pct(pays,visits);
+  document.getElementById('avgPay').textContent=rub(d.payments.count?d.payments.revenue/d.payments.count:0);
+  document.getElementById('sources').innerHTML=(d.sources||[]).map(s=>`<tr><td><b>${s.source}</b></td><td>${f(s.visits)}</td><td>${f(s.analyses)}</td><td>${f(s.results)}</td><td>${f(s.paid_sessions)}</td><td>${pct(s.paid_sessions,s.visits)}</td><td>${rub(s.revenue)}</td></tr>`).join('');
+ }catch(e){st.textContent=e.message;document.getElementById('app').style.display='none'}
+}
+document.getElementById('token').value=sessionStorage.getItem('sv_analytics_token')||'';
+if(document.getElementById('token').value)load();
+</script></body></html>"""
+
+@app.get("/analytics", response_class=HTMLResponse)
+def analytics_dashboard():
+    return HTMLResponse(analytics_dashboard_html())
+
 @app.get("/health")
 def health():
-    return {"ok": True, "version": "2.3.1", "legal_ready": legal_ready(), "service": "СделатьВычет"}
+    return {"ok": True, "version": "2.4.0", "legal_ready": legal_ready(), "service": "СделатьВычет", "metrika_configured": bool(METRIKA_COUNTER_ID), "analytics_db": bool(ANALYTICS_DB_PATH)}
 
 
 @app.post("/api/analyze")
@@ -1256,9 +1577,20 @@ async def analyze(
     pd_consent: str = Form(""),
     terms_version: str = Form(""),
     consent_version: str = Form(""),
+    analytics_session_id: str = Form(""),
+    utm_source: str = Form(""),
+    utm_medium: str = Form(""),
+    utm_campaign: str = Form(""),
+    utm_content: str = Form(""),
+    utm_term: str = Form(""),
+    referrer_host: str = Form(""),
 ):
     accepted = str(terms_accepted).lower() in {"1", "true", "yes", "on"}
     consented = str(pd_consent).lower() in {"1", "true", "yes", "on"}
+    analytics_session_id = clean_analytics_value(analytics_session_id, 80)
+    attribution = analytics_attribution_from_form(
+        utm_source, utm_medium, utm_campaign, utm_content, utm_term, referrer_host
+    )
 
     if not accepted:
         raise HTTPException(400, "Перед загрузкой необходимо отдельно принять Пользовательское соглашение.")
@@ -1273,6 +1605,8 @@ async def analyze(
     if len(data) > 30 * 1024 * 1024:
         raise HTTPException(413, "Файл больше 30 МБ. Загрузите более компактную выписку.")
     name = (file.filename or "").lower()
+    bank_key = "unknown"
+    parser = ""
     try:
         if name.endswith(".pdf"):
             pdf_text = extract_pdf_text(data)
@@ -1337,6 +1671,10 @@ async def analyze(
             "result": result,
             "paid": False,
             "payment_id": None,
+            "analytics_session_id": analytics_session_id if valid_session_id(analytics_session_id) else "",
+            "analytics_attribution": attribution,
+            "analytics_payment_success_recorded": False,
+            "analytics_report_view_recorded": False,
             "legal": {
                 "event_id": consent_event["event_id"],
                 "terms_version": TERMS_VERSION,
@@ -1344,6 +1682,18 @@ async def analyze(
                 "consent_version": CONSENT_VERSION,
             },
         }
+
+        if valid_session_id(analytics_session_id):
+            record_analytics_event(
+                event="analysis_success",
+                session_id=analytics_session_id,
+                attribution=attribution,
+                bank=bank_key,
+                parser=parser,
+                candidate_count=result["candidates_count"],
+                refund_value=result["potential_if_all_confirmed"]["refund_from"],
+                dedupe_key=f"analysis_success:{analysis_id}",
+            )
 
         # ВАЖНО: до оплаты браузер получает только агрегаты, без категорий и транзакций.
         return JSONResponse({
@@ -1353,10 +1703,20 @@ async def analyze(
             "price": REPORT_PRICE_RUB,
         })
     except ValueError as e:
+        if valid_session_id(analytics_session_id):
+            record_analytics_event(
+                event="analysis_error", session_id=analytics_session_id,
+                attribution=attribution, bank=bank_key, parser=parser or "parse_error"
+            )
         raise HTTPException(422, str(e))
     except HTTPException:
         raise
     except Exception as e:
+        if valid_session_id(analytics_session_id):
+            record_analytics_event(
+                event="analysis_error", session_id=analytics_session_id,
+                attribution=attribution, bank=bank_key, parser=parser or "server_error"
+            )
         raise HTTPException(500, f"Ошибка обработки: {e}")
 
 
@@ -1367,6 +1727,13 @@ class PaymentPayload(BaseModel):
 @app.post("/api/create-payment")
 def create_payment(payload: PaymentPayload, request: Request):
     item = get_analysis_or_404(payload.analysis_id)
+    sid = item.get("analytics_session_id", "")
+    attr = item.get("analytics_attribution", {})
+    if valid_session_id(sid):
+        record_analytics_event(
+            event="payment_created", session_id=sid, attribution=attr,
+            dedupe_key=f"payment_created:{payload.analysis_id}"
+        )
     if item.get("paid"):
         return {"status": "succeeded", "confirmation_url": f"{public_base_url(request)}/?analysis={payload.analysis_id}&paid=1"}
 
@@ -1407,6 +1774,15 @@ def test_pay(analysis_id: str, payment_id: str):
     if item.get("payment_id") != payment_id:
         raise HTTPException(400, "Некорректный тестовый платёж.")
     item["paid"] = True
+    sid = item.get("analytics_session_id", "")
+    if valid_session_id(sid) and not item.get("analytics_payment_success_recorded"):
+        record_analytics_event(
+            event="payment_success", session_id=sid,
+            attribution=item.get("analytics_attribution", {}),
+            payment_amount=REPORT_PRICE_RUB,
+            dedupe_key=f"payment_success:{analysis_id}",
+        )
+        item["analytics_payment_success_recorded"] = True
     return RedirectResponse(url=f"/?analysis={analysis_id}&paid=1", status_code=302)
 
 
@@ -1427,6 +1803,15 @@ def payment_status(analysis_id: str):
     succeeded = payment.get("status") == "succeeded" and bool(payment.get("paid"))
     if succeeded:
         item["paid"] = True
+        sid = item.get("analytics_session_id", "")
+        if valid_session_id(sid) and not item.get("analytics_payment_success_recorded"):
+            record_analytics_event(
+                event="payment_success", session_id=sid,
+                attribution=item.get("analytics_attribution", {}),
+                payment_amount=REPORT_PRICE_RUB,
+                dedupe_key=f"payment_success:{analysis_id}",
+            )
+            item["analytics_payment_success_recorded"] = True
     return {"status": payment.get("status"), "paid": succeeded}
 
 
@@ -1435,6 +1820,14 @@ def paid_report(analysis_id: str):
     item = get_analysis_or_404(analysis_id)
     if not item.get("paid"):
         raise HTTPException(402, "Сначала оплатите полный отчёт.")
+    sid = item.get("analytics_session_id", "")
+    if valid_session_id(sid) and not item.get("analytics_report_view_recorded"):
+        record_analytics_event(
+            event="report_view", session_id=sid,
+            attribution=item.get("analytics_attribution", {}),
+            dedupe_key=f"report_view:{analysis_id}",
+        )
+        item["analytics_report_view_recorded"] = True
     return JSONResponse(item["result"])
 
 
@@ -1777,6 +2170,21 @@ input[type=file]{display:none}
 .track{height:3px;background:#ecece7;border-radius:99px;overflow:hidden}
 .bar{height:100%;width:28%;background:#111;border-radius:99px;animation:scan 1.05s infinite alternate ease-in-out}
 @keyframes scan{from{transform:translateX(-110%)}to{transform:translateX(360%)}}
+
+.analyticsConsent{
+  position:fixed;left:18px;bottom:18px;z-index:60;max-width:420px;
+  padding:14px;background:#111;color:#fff;border:1px solid #333;border-radius:14px;
+  box-shadow:0 18px 50px rgba(0,0,0,.28);display:none
+}
+.analyticsConsent.show{display:block}
+.analyticsConsent b{font-size:11px}
+.analyticsConsent p{margin:5px 0 11px;color:#aaa;font-size:9px;line-height:1.5}
+.analyticsConsentActions{display:flex;gap:7px}
+.analyticsConsent button{border:0;border-radius:8px;padding:8px 10px;font-size:9px;font-weight:800;cursor:pointer}
+.analyticsConsent .allow{background:var(--accent);color:#172000}
+.analyticsConsent .deny{background:#292927;color:#ddd}
+@media(max-width:600px){.analyticsConsent{left:12px;right:12px;bottom:78px;max-width:none}}
+
 #error{display:none;margin-top:12px;background:#fff1ef;border:1px solid #f0d5d1;color:var(--red);padding:10px 11px;border-radius:9px;font-size:11px}
 
 .summary{display:none;margin-top:24px}
@@ -2010,7 +2418,7 @@ th{color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.06e
       </div>
     </div>
     <div class="preview">
-      <div class="previewTop"><span>Результат</span><span class="previewPill">SDELATVYCHET 2.3.1</span></div>
+      <div class="previewTop"><span>Результат</span><span class="previewPill">SDELATVYCHET 2.4.0</span></div>
       <div class="previewLabel">Потенциальный вычет</div>
       <div class="previewMoney">от 20 208 ₽</div>
       <div class="previewFast"><i>✓</i>Сразу покажем, где искать вычет</div>
@@ -2197,12 +2605,84 @@ th{color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.06e
     <a href="mailto:inbox@sdelatvychet.ru">inbox@sdelatvychet.ru</a>
   </footer>
 </div>
+<div class="analyticsConsent" id="analyticsConsent">
+  <b>Помочь нам улучшать СделатьВычет?</b>
+  <p>При разрешении подключим Яндекс Метрику без Вебвизора. Содержимое выписки, названия операций и точные суммы в Метрику не передаются.</p>
+  <div class="analyticsConsentActions"><button class="allow" id="allowAnalytics">Разрешить аналитику</button><button class="deny" id="denyAnalytics">Только необходимые</button></div>
+</div>
 <div class="mobileSticky" id="mobileSticky">
   <div><span>СделатьВычет</span><b id="stickyText">Проверить выписку</b></div>
   <button id="stickyBtn" type="button">Начать →</button>
 </div>
 <div class="toast" id="toast"></div>
 <script>
+const METRIKA_COUNTER_ID=Number('__METRIKA_COUNTER_ID__')||0;
+const ANALYTICS_SESSION_KEY='sv_analytics_session';
+const ANALYTICS_CONSENT_KEY='sv_analytics_consent';
+
+function makeAnalyticsSession(){
+  let id=localStorage.getItem(ANALYTICS_SESSION_KEY);
+  if(!id){
+    try{id=crypto.randomUUID().replaceAll('-','')}catch(e){id='sv'+Math.random().toString(36).slice(2)+Date.now().toString(36)}
+    localStorage.setItem(ANALYTICS_SESSION_KEY,id);
+  }
+  return id;
+}
+const analyticsSessionId=makeAnalyticsSession();
+
+function analyticsAttribution(){
+  const q=new URLSearchParams(location.search);
+  let ref='';
+  try{ref=document.referrer?new URL(document.referrer).hostname:''}catch(e){}
+  const stored=JSON.parse(sessionStorage.getItem('sv_attribution')||'{}');
+  const a={
+    utm_source:q.get('utm_source')||stored.utm_source||'',
+    utm_medium:q.get('utm_medium')||stored.utm_medium||'',
+    utm_campaign:q.get('utm_campaign')||stored.utm_campaign||'',
+    utm_content:q.get('utm_content')||stored.utm_content||'',
+    utm_term:q.get('utm_term')||stored.utm_term||'',
+    referrer_host:stored.referrer_host||ref||''
+  };
+  sessionStorage.setItem('sv_attribution',JSON.stringify(a));
+  return a;
+}
+const attribution=analyticsAttribution();
+
+function sensitiveReturnUrl(){
+  const q=new URLSearchParams(location.search);
+  return q.has('analysis')||q.has('payment')||q.has('paid');
+}
+function metrikaAllowed(){return localStorage.getItem(ANALYTICS_CONSENT_KEY)==='yes'}
+function loadMetrika(){
+  if(!METRIKA_COUNTER_ID||!metrikaAllowed()||sensitiveReturnUrl()||window.__svMetrikaLoaded)return;
+  window.__svMetrikaLoaded=true;
+  window.ym=window.ym||function(){(ym.a=ym.a||[]).push(arguments)};ym.l=1*new Date();
+  const s=document.createElement('script');s.async=true;s.src='https://mc.yandex.ru/metrika/tag.js?id='+METRIKA_COUNTER_ID;
+  document.head.appendChild(s);
+  ym(METRIKA_COUNTER_ID,'init',{ssr:true,webvisor:false,clickmap:true,trackLinks:true,accurateTrackBounce:true,sendTitle:false});
+}
+function metrikaGoal(event){
+  if(METRIKA_COUNTER_ID&&metrikaAllowed()&&!sensitiveReturnUrl()&&typeof window.ym==='function'){
+    try{ym(METRIKA_COUNTER_ID,'reachGoal',event)}catch(e){}
+  }
+}
+function track(event){
+  const body={event,session_id:analyticsSessionId,...attribution};
+  try{
+    fetch('/api/analytics/event',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),keepalive:true}).catch(()=>{});
+  }catch(e){}
+  metrikaGoal(event);
+}
+function initAnalyticsConsent(){
+  const box=document.getElementById('analyticsConsent');
+  if(!box)return;
+  const choice=localStorage.getItem(ANALYTICS_CONSENT_KEY);
+  if(METRIKA_COUNTER_ID&&!choice&&!sensitiveReturnUrl())box.classList.add('show');
+  if(choice==='yes')loadMetrika();
+  document.getElementById('allowAnalytics').onclick=()=>{localStorage.setItem(ANALYTICS_CONSENT_KEY,'yes');box.classList.remove('show');loadMetrika()};
+  document.getElementById('denyAnalytics').onclick=()=>{localStorage.setItem(ANALYTICS_CONSENT_KEY,'no');box.classList.remove('show')};
+}
+
 let chosenFile=null,result=null,analysisId=null;
 const TERMS_VERSION='2026-08-27-v1',CONSENT_VERSION='2026-08-27-v1';
 const file=document.getElementById('file'),drop=document.getElementById('drop'),analyze=document.getElementById('analyze');
@@ -2210,12 +2690,14 @@ const termsAccept=document.getElementById('termsAccept'),pdConsent=document.getE
 function refreshAnalyzeButton(){analyze.disabled=!(chosenFile&&termsAccept.checked&&pdConsent.checked)}
 termsAccept.onchange=refreshAnalyzeButton;pdConsent.onchange=refreshAnalyzeButton;
 file.onchange=()=>setFile(file.files[0]);
+drop.addEventListener('click',()=>track('upload_click'));
 ['dragover','dragenter'].forEach(e=>drop.addEventListener(e,x=>{x.preventDefault();drop.classList.add('drag')}));
 ['dragleave','drop'].forEach(e=>drop.addEventListener(e,x=>{x.preventDefault();drop.classList.remove('drag')}));
 drop.addEventListener('drop',e=>{if(e.dataTransfer.files[0])setFile(e.dataTransfer.files[0])});
 function setFile(f){
   if(!f)return;
   chosenFile=f;
+  track('file_selected');
   drop.classList.add('selected');
   document.getElementById('fname').textContent=f.name;
   document.getElementById('fileSub').textContent=(f.size/1024/1024).toFixed(1)+' МБ · готово к анализу';
@@ -2242,6 +2724,7 @@ function toast(s){const e=document.getElementById('toast');e.textContent=s;e.sty
 function copyText(s){navigator.clipboard?.writeText(s).then(()=>toast('Готовый запрос скопирован')).catch(()=>toast('Скопируйте текст вручную'))}
 
 analyze.onclick=async()=>{
+  track('analysis_started');
   document.getElementById('error').style.display='none';
   document.getElementById('loader').style.display='block';
   analyze.disabled=true;
@@ -2251,6 +2734,13 @@ analyze.onclick=async()=>{
   fd.append('pd_consent',pdConsent.checked?'1':'0');
   fd.append('terms_version',TERMS_VERSION);
   fd.append('consent_version',CONSENT_VERSION);
+  fd.append('analytics_session_id',analyticsSessionId);
+  fd.append('utm_source',attribution.utm_source);
+  fd.append('utm_medium',attribution.utm_medium);
+  fd.append('utm_campaign',attribution.utm_campaign);
+  fd.append('utm_content',attribution.utm_content);
+  fd.append('utm_term',attribution.utm_term);
+  fd.append('referrer_host',attribution.referrer_host);
   try{
     const r=await fetch('/api/analyze',{method:'POST',body:fd});
     const data=await r.json();
@@ -2259,6 +2749,7 @@ analyze.onclick=async()=>{
     localStorage.setItem('sdelatVychetAnalysisId',analysisId);
     showSummary(data);
   }catch(e){
+    track('analysis_error');
     const er=document.getElementById('error');er.textContent=e.message;er.style.display='block'
   }finally{
     document.getElementById('loader').style.display='none';refreshAnalyzeButton()
@@ -2276,6 +2767,7 @@ function updateSticky(mode){
 updateSticky('start');
 
 function showSummary(data){
+  track('result_view');track('paywall_view');
   document.getElementById('results').style.display='none';
   document.getElementById('summary').style.display='block';
   document.getElementById('summaryExpenses').textContent=rub(data.expenses_found);
@@ -2286,6 +2778,7 @@ function showSummary(data){
 
 async function buyReport(){
   if(!analysisId)return;
+  track('payment_click');
   const btn=document.getElementById('payBtn');
   const status=document.getElementById('paymentStatus');
   btn.disabled=true;btn.textContent='Открываем оплату…';
@@ -2301,6 +2794,7 @@ async function buyReport(){
     if(d.status==='succeeded'){await unlockReport();return}
     window.location.href=d.confirmation_url;
   }catch(e){
+    track('payment_error');
     status.textContent=e.message;
     status.style.display='block';
     btn.disabled=false;btn.textContent='Получить отчёт';
@@ -2325,6 +2819,7 @@ async function unlockReport(){
     const report=await rr.json();
     if(!rr.ok)throw new Error(report.detail||'Не удалось открыть отчёт');
     result=report; result.paid_unlocked=true;
+    metrikaGoal('payment_success');metrikaGoal('report_view');
     document.getElementById('summary').style.display='none';
     render();
     const sb=document.getElementById('successBanner'); if(sb) sb.classList.add('show');
@@ -2349,7 +2844,11 @@ async function resumeAfterPayment(){
     await unlockReport();
   }
 }
-window.addEventListener('DOMContentLoaded',resumeAfterPayment);
+window.addEventListener('DOMContentLoaded',()=>{
+  initAnalyticsConsent();
+  track('visit');
+  resumeAfterPayment();
+});
 
 
 const FNS_LK_URL='https://lkfl2.nalog.ru/lkfl/';
@@ -2365,7 +2864,10 @@ function setGuideState(state){
   localStorage.setItem(guideStorageKey(),JSON.stringify(state));
 }
 function toggleGuideStep(step){
-  const st=getGuideState();st[step]=!st[step];setGuideState(st);renderJourney();
+  const st=getGuideState();st[step]=!st[step];setGuideState(st);
+  if(st[step])track('guide_step_'+step);
+  if([1,2,3].every(x=>st[x]))track('guide_complete');
+  renderJourney();
 }
 function guideCompletedCount(){
   const st=getGuideState();return [1,2,3].filter(x=>st[x]).length
