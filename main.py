@@ -11,16 +11,17 @@ import json
 import base64
 import urllib.request
 import urllib.error
+import hmac
 from collections import defaultdict
 from datetime import datetime
 from html import escape
 from typing import Any
 
-from fastapi import FastAPI, File, UploadFile, HTTPException, Request
+from fastapi import FastAPI, File, UploadFile, HTTPException, Request, Form
 from fastapi.responses import HTMLResponse, JSONResponse, Response, RedirectResponse
 from pydantic import BaseModel
 
-app = FastAPI(title="Tax Radar", version="1.8.1")
+app = FastAPI(title="Tax Radar", version="1.9.0")
 
 
 REPORT_PRICE_RUB = 499
@@ -31,6 +32,292 @@ YOOKASSA_SHOP_ID = os.getenv("YOOKASSA_SHOP_ID", "").strip()
 YOOKASSA_SECRET_KEY = os.getenv("YOOKASSA_SECRET_KEY", "").strip()
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
 PAYMENT_TEST_MODE = os.getenv("PAYMENT_TEST_MODE", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+SERVICE_NAME = "Tax Radar"
+OPERATOR_NAME = "Колосов Роман Михайлович"
+OPERATOR_INN = "772072450119"
+OPERATOR_EMAIL = "inbox@sdelatvychet.ru"
+# Закон требует адрес оператора в письменном согласии. До публичного запуска
+# заполните эту переменную в Timeweb: OPERATOR_ADDRESS=...
+OPERATOR_ADDRESS = os.getenv("OPERATOR_ADDRESS", "").strip()
+
+TERMS_VERSION = "2026-08-27-v1"
+PRIVACY_VERSION = "2026-08-27-v1"
+CONSENT_VERSION = "2026-08-27-v1"
+
+# Аудит согласий. Для production путь должен находиться на постоянном диске/БД.
+CONSENT_AUDIT_PATH = os.getenv("CONSENT_AUDIT_PATH", "data/consent_audit.jsonl").strip()
+CONSENT_AUDIT_SECRET = os.getenv("CONSENT_AUDIT_SECRET", "").strip()
+
+
+def operator_address_display() -> str:
+    return OPERATOR_ADDRESS or "АДРЕС ОПЕРАТОРА НЕ ЗАПОЛНЕН — задайте OPERATOR_ADDRESS перед публичным запуском"
+
+
+def legal_ready() -> bool:
+    return bool(OPERATOR_ADDRESS)
+
+
+def request_ip(request: Request) -> str:
+    forwarded = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+    if forwarded:
+        return forwarded
+    return request.client.host if request.client else ""
+
+
+def privacy_hash(value: str) -> str:
+    """Store a pseudonymous proof rather than raw IP / user-agent."""
+    key = (CONSENT_AUDIT_SECRET or "tax-radar-consent-audit-v1").encode("utf-8")
+    return hmac.new(key, (value or "").encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def append_consent_audit(event: dict[str, Any]) -> None:
+    """
+    Append-only local audit.
+    IMPORTANT: production must point CONSENT_AUDIT_PATH to persistent storage
+    (or replace with PostgreSQL). Container-local storage alone is not enough.
+    """
+    if not CONSENT_AUDIT_PATH:
+        return
+    path = os.path.abspath(CONSENT_AUDIT_PATH)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    line = json.dumps(event, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(line + "\n")
+
+
+def legal_shell(title: str, content: str) -> str:
+    address_warning = "" if legal_ready() else """
+      <div class="warning"><b>Тестовая конфигурация:</b> адрес оператора ещё не заполнен.
+      Перед публичным запуском необходимо задать <code>OPERATOR_ADDRESS</code>.</div>
+    """
+    return f"""<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{escape(title)} — Tax Radar</title>
+<style>
+:root{{--ink:#111;--muted:#6c6c66;--line:#e4e4dd;--paper:#f5f5f0;--accent:#b7ff2a}}
+*{{box-sizing:border-box}}body{{margin:0;background:var(--paper);color:var(--ink);font-family:Inter,Arial,sans-serif}}
+.wrap{{max-width:880px;margin:0 auto;padding:44px 24px 80px}}.top{{display:flex;justify-content:space-between;gap:20px;align-items:center;margin-bottom:42px}}
+.brand{{font-weight:900;letter-spacing:-.04em;font-size:20px}}a{{color:inherit}}.back{{font-size:13px;color:var(--muted)}}
+article{{background:white;border:1px solid var(--line);border-radius:18px;padding:38px}}
+h1{{font-size:34px;letter-spacing:-.045em;margin:0 0 8px}}h2{{font-size:19px;letter-spacing:-.025em;margin:30px 0 10px}}
+p,li{{font-size:14px;line-height:1.65}}li{{margin:6px 0}}.meta{{font-size:12px;color:var(--muted);margin-bottom:28px}}
+.note{{padding:14px;background:#f7f7f2;border-radius:10px;margin:14px 0;font-size:13px;line-height:1.6}}
+.warning{{padding:14px;background:#fff2de;border:1px solid #f1d3a7;border-radius:10px;margin-bottom:18px;font-size:13px;line-height:1.6}}
+.operator{{margin-top:28px;padding-top:20px;border-top:1px solid var(--line);font-size:13px;line-height:1.7}}
+code{{background:#eee;padding:2px 5px;border-radius:4px}}@media(max-width:650px){{article{{padding:24px 18px}}h1{{font-size:28px}}}}
+</style></head><body><div class="wrap">
+<div class="top"><div class="brand">Tax Radar</div><a class="back" href="/">← Вернуться к сервису</a></div>
+{address_warning}
+<article>{content}</article></div></body></html>"""
+
+
+def operator_block() -> str:
+    return f"""
+    <div class="operator">
+      <b>Оператор / Исполнитель:</b> {escape(OPERATOR_NAME)}<br>
+      Физическое лицо, применяющее специальный налоговый режим «Налог на профессиональный доход»<br>
+      ИНН: {escape(OPERATOR_INN)}<br>
+      Адрес: {escape(operator_address_display())}<br>
+      E-mail: <a href="mailto:{escape(OPERATOR_EMAIL)}">{escape(OPERATOR_EMAIL)}</a>
+    </div>
+    """
+
+
+def terms_html() -> str:
+    body = f"""
+      <h1>Пользовательское соглашение</h1>
+      <div class="meta">Версия {TERMS_VERSION}. Действует с 27 августа 2026 года.</div>
+
+      <h2>1. Общие положения</h2>
+      <p>Настоящее Пользовательское соглашение регулирует использование сервиса {SERVICE_NAME}.
+      Исполнителем является {escape(OPERATOR_NAME)}, физическое лицо, применяющее налоговый режим
+      «Налог на профессиональный доход».</p>
+      <p>Используя сервис и отдельно принимая настоящее Соглашение, пользователь подтверждает,
+      что достиг 18 лет, действует от своего имени и ознакомился с условиями сервиса.</p>
+
+      <h2>2. Что делает Tax Radar</h2>
+      <p>Сервис автоматически анализирует банковскую выписку пользователя, ищет операции,
+      которые по описанию могут относиться к расходам, учитываемым при получении налоговых
+      вычетов, рассчитывает ориентировочную сумму и формирует персональный информационный отчёт
+      и пошаговый маршрут дальнейших действий.</p>
+      <div class="note"><b>Важно:</b> результат является предварительным информационным расчётом.
+      Tax Radar не является ФНС России, налоговым органом, адвокатским или аудиторским сервисом
+      и не гарантирует предоставление вычета или возврат конкретной суммы.</div>
+
+      <h2>3. Обязанности пользователя</h2>
+      <ul>
+        <li>загружать собственную банковскую выписку либо документ, который пользователь вправе законно предоставить;</li>
+        <li>не загружать медицинские карты, диагнозы, результаты исследований, паспортные сканы и иные документы, не требующиеся для работы сервиса;</li>
+        <li>самостоятельно проверять итоговые сведения и документы перед их направлением в ФНС;</li>
+        <li>не использовать сервис для противоправных целей или анализа данных третьих лиц без законного основания.</li>
+      </ul>
+
+      <h2>4. Стоимость и оказание услуги</h2>
+      <p>Бесплатный этап показывает агрегированную оценку найденных расходов и потенциального
+      возврата. Доступ к полному персональному отчёту предоставляется после оплаты цены,
+      указанной на экране оплаты (на дату этой версии — {REPORT_PRICE_RUB} ₽).</p>
+      <p>Услуга по формированию отчёта считается оказанной в момент предоставления пользователю
+      доступа к сформированному отчёту. Это положение не ограничивает обязательные права
+      потребителя, установленные законодательством Российской Федерации.</p>
+
+      <h2>5. Точность результата</h2>
+      <p>Распознавание банковских выписок и классификация операций выполняются автоматически.
+      Название продавца, категория банковской операции или факт оплаты сами по себе могут быть
+      недостаточны для получения вычета. Окончательное право на вычет определяется законом,
+      подтверждающими документами, размером уплаченного НДФЛ и решением налогового органа.</p>
+
+      <h2>6. Персональные данные</h2>
+      <p>Обработка персональных данных регулируется отдельной
+      <a href="/privacy">Политикой обработки персональных данных</a>.
+      Согласие на обработку персональных данных предоставляется пользователем
+      <b>отдельно</b> от принятия настоящего Соглашения.</p>
+
+      <h2>7. Интеллектуальные права</h2>
+      <p>Программный код, дизайн, структура и материалы сервиса принадлежат правообладателям.
+      Пользователю предоставляется право использовать сформированный для него отчёт для личных целей.</p>
+
+      <h2>8. Ответственность и обращения</h2>
+      <p>Исполнитель отвечает за нарушение обязательств в пределах, установленных применимым
+      законодательством. Никакое положение настоящего Соглашения не исключает ответственность,
+      которую нельзя исключить по закону.</p>
+      <p>Претензии и запросы направляются на {escape(OPERATOR_EMAIL)}. Исполнитель вправе
+      запросить сведения, необходимые для идентификации платежа или конкретного отчёта.</p>
+
+      <h2>9. Изменения</h2>
+      <p>Новая редакция Соглашения применяется к действиям, совершённым после её публикации.
+      Версия документа фиксируется сервером при загрузке выписки.</p>
+      {operator_block()}
+    """
+    return legal_shell("Пользовательское соглашение", body)
+
+
+def privacy_html() -> str:
+    body = f"""
+      <h1>Политика обработки персональных данных</h1>
+      <div class="meta">Версия {PRIVACY_VERSION}. Действует с 27 августа 2026 года.</div>
+
+      <h2>1. Оператор</h2>
+      <p>Оператором персональных данных при использовании Tax Radar является
+      {escape(OPERATOR_NAME)}. Контакт для обращений: {escape(OPERATOR_EMAIL)}.</p>
+
+      <h2>2. Какие данные обрабатываются</h2>
+      <p>В зависимости от содержания банковской выписки сервис технически может получить:</p>
+      <ul>
+        <li>ФИО пользователя, сведения о банке, счёте или карте, содержащиеся в выписке;</li>
+        <li>даты и суммы операций, валюту, описания операций, наименования продавцов и поставщиков услуг;</li>
+        <li>агрегированные результаты анализа и выбранные пользователем операции;</li>
+        <li>идентификатор анализа, сведения о факте и статусе оплаты;</li>
+        <li>техническую запись о принятии документов: дата и время, версии документов, псевдонимизированные хэши IP-адреса и user-agent.</li>
+      </ul>
+      <p>Платёжные реквизиты банковской карты пользователя Tax Radar не получает: ввод
+      платёжных данных происходит на стороне платёжного провайдера.</p>
+
+      <h2>3. Специальные категории данных</h2>
+      <p>Tax Radar <b>не предназначен для получения диагнозов, медицинских карт, сведений о
+      заболеваниях или иных медицинских документов</b>. Сервис анализирует исключительно
+      банковские операции в целях классификации расходов для налогового вычета и не ставит
+      диагнозов и не делает выводов о состоянии здоровья пользователя.</p>
+      <div class="note">Не загружайте в сервис медицинские заключения, рецепты, паспортные
+      сканы и другие документы, кроме банковской выписки или поддерживаемой таблицы операций.</div>
+
+      <h2>4. Цели и основания обработки</h2>
+      <ul>
+        <li><b>анализ выписки и формирование результата</b> — отдельное согласие пользователя и исполнение соглашения с пользователем;</li>
+        <li><b>предоставление платного отчёта и обработка платежа</b> — исполнение соглашения;</li>
+        <li><b>фиксация факта принятия юридических документов</b> — подтверждение выполнения обязанностей оператора и защита законных прав;</li>
+        <li><b>ответы на обращения и выполнение требований закона</b> — исполнение обязанностей, установленных законодательством.</li>
+      </ul>
+
+      <h2>5. Как происходит обработка</h2>
+      <p>Операции включают сбор, извлечение, систематизацию, использование, временное хранение,
+      блокирование и уничтожение данных с использованием средств автоматизации.</p>
+      <p><b>Исходный файл банковской выписки не записывается приложением в постоянное хранилище.</b>
+      Он передаётся серверу по HTTPS, читается в оперативной памяти и после завершения запроса
+      не сохраняется приложением как отдельный файл.</p>
+      <p>Результат анализа временно хранится в оперативной памяти приложения до 2 часов и
+      удаляется автоматически по истечении этого срока либо при перезапуске процесса.</p>
+
+      <h2>6. Кому могут передаваться данные</h2>
+      <p>Для технической работы сервиса используется российская серверная инфраструктура
+      хостинг-провайдера. При оплате минимально необходимые сведения о заказе передаются
+      платёжному провайдеру. Tax Radar не передаёт третьим лицам исходную банковскую выписку
+      для рекламных целей и не продаёт персональные данные.</p>
+
+      <h2>7. Локализация</h2>
+      <p>Первичный сбор и обработка данных пользователей сервиса организуются на серверной
+      инфраструктуре, расположенной на территории Российской Федерации. Оператор не
+      предусматривает трансграничную передачу банковской выписки.</p>
+
+      <h2>8. Сроки</h2>
+      <ul>
+        <li>исходный файл — не сохраняется приложением после обработки запроса;</li>
+        <li>результат анализа — до 2 часов;</li>
+        <li>сведения, необходимые для исполнения требований закона, бухгалтерского/налогового учёта и защиты прав сторон, — в сроки, установленные законодательством;</li>
+        <li>аудит факта согласия — в течение срока, необходимого для подтверждения законности обработки и защиты прав оператора.</li>
+      </ul>
+
+      <h2>9. Права пользователя</h2>
+      <p>Пользователь вправе запросить сведения об обработке своих данных, потребовать их
+      уточнения, блокирования или уничтожения при наличии предусмотренных законом оснований,
+      а также отозвать согласие. Запрос направляется на {escape(OPERATOR_EMAIL)}.</p>
+
+      <h2>10. Безопасность и минимизация</h2>
+      <p>Оператор применяет принцип минимизации: не хранит исходный PDF после анализа,
+      не получает реквизиты платёжной карты, не использует данные выписки для рекламы,
+      а технические сетевые идентификаторы в журнале согласий сохраняются в виде хэшей.</p>
+
+      {operator_block()}
+    """
+    return legal_shell("Политика обработки персональных данных", body)
+
+
+def consent_html() -> str:
+    body = f"""
+      <h1>Согласие на обработку персональных данных</h1>
+      <div class="meta">Версия {CONSENT_VERSION}. Оформляется отдельно от Пользовательского соглашения.</div>
+
+      <p>Я свободно, своей волей и в своём интересе даю оператору —
+      {escape(OPERATOR_NAME)}, адрес: {escape(operator_address_display())},
+      согласие на обработку персональных данных в целях анализа банковской выписки,
+      поиска потенциальных налоговых вычетов, формирования и предоставления отчёта,
+      сопровождения оплаты и исполнения обращений пользователя.</p>
+
+      <h2>1. Перечень данных</h2>
+      <p>Согласие распространяется на персональные данные, которые могут содержаться в
+      банковской выписке: ФИО, сведения о банке, счёте/карте, даты и суммы операций,
+      валюта, описания операций, наименования продавцов/получателей, а также
+      технические данные о взаимодействии с сервисом и идентификаторы заказа.</p>
+
+      <h2>2. Действия с данными</h2>
+      <p>Разрешаются сбор, извлечение, запись в оперативную память, систематизация,
+      использование, временное хранение, блокирование и уничтожение с применением
+      средств автоматизации.</p>
+
+      <h2>3. Ограничения</h2>
+      <p>Согласие <b>не является согласием на распространение</b> персональных данных.
+      Оператор не просит пользователя предоставлять диагнозы, медицинские карты,
+      медицинские заключения, биометрические данные или паспортные сканы.</p>
+
+      <h2>4. Срок</h2>
+      <p>Согласие действует с момента его предоставления до достижения целей обработки
+      или до его отзыва, если у оператора отсутствует иное законное основание для
+      продолжения обработки. Исходный файл выписки приложением после анализа не
+      сохраняется; результат анализа хранится до 2 часов.</p>
+
+      <h2>5. Отзыв</h2>
+      <p>Согласие может быть отозвано обращением на
+      <a href="mailto:{escape(OPERATOR_EMAIL)}">{escape(OPERATOR_EMAIL)}</a>.
+      В обращении следует указать сведения, позволяющие установить, к какой обработке
+      относится требование.</p>
+
+      <div class="note"><b>Отдельное действие:</b> на странице загрузки это Согласие
+      подтверждается отдельным чекбоксом и не объединено с принятием Пользовательского соглашения.</div>
+
+      {operator_block()}
+    """
+    return legal_shell("Согласие на обработку персональных данных", body)
 
 
 def cleanup_analyses() -> None:
@@ -912,13 +1199,57 @@ def index():
     return HTMLResponse(INDEX_HTML)
 
 
+@app.get("/terms", response_class=HTMLResponse)
+def terms():
+    return HTMLResponse(terms_html())
+
+
+@app.get("/privacy", response_class=HTMLResponse)
+def privacy():
+    return HTMLResponse(privacy_html())
+
+
+@app.get("/consent", response_class=HTMLResponse)
+def consent():
+    return HTMLResponse(consent_html())
+
+
+@app.get("/api/legal-status")
+def legal_status():
+    return {
+        "legal_ready": legal_ready(),
+        "operator_address_configured": bool(OPERATOR_ADDRESS),
+        "terms_version": TERMS_VERSION,
+        "privacy_version": PRIVACY_VERSION,
+        "consent_version": CONSENT_VERSION,
+        "audit_path_configured": bool(CONSENT_AUDIT_PATH),
+    }
+
+
 @app.get("/health")
 def health():
-    return {"ok": True, "version": "1.8.1"}
+    return {"ok": True, "version": "1.9.0", "legal_ready": legal_ready()}
 
 
 @app.post("/api/analyze")
-async def analyze(file: UploadFile = File(...)):
+async def analyze(
+    request: Request,
+    file: UploadFile = File(...),
+    terms_accepted: str = Form(""),
+    pd_consent: str = Form(""),
+    terms_version: str = Form(""),
+    consent_version: str = Form(""),
+):
+    accepted = str(terms_accepted).lower() in {"1", "true", "yes", "on"}
+    consented = str(pd_consent).lower() in {"1", "true", "yes", "on"}
+
+    if not accepted:
+        raise HTTPException(400, "Перед загрузкой необходимо отдельно принять Пользовательское соглашение.")
+    if not consented:
+        raise HTTPException(400, "Перед загрузкой необходимо отдельно дать согласие на обработку персональных данных.")
+    if terms_version != TERMS_VERSION or consent_version != CONSENT_VERSION:
+        raise HTTPException(409, "Юридические документы обновились. Обновите страницу и подтвердите актуальную редакцию.")
+
     data = await file.read()
     if not data:
         raise HTTPException(400, "Файл пустой.")
@@ -967,12 +1298,34 @@ async def analyze(file: UploadFile = File(...)):
         result["filename"], result["parser"] = file.filename, parser
 
         analysis_id = uuid.uuid4().hex
+        consent_event = {
+            "event_id": uuid.uuid4().hex,
+            "analysis_id": analysis_id,
+            "created_at_utc": datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
+            "event": "statement_upload_consent",
+            "terms_accepted": True,
+            "pd_consent": True,
+            "terms_version": TERMS_VERSION,
+            "privacy_version": PRIVACY_VERSION,
+            "consent_version": CONSENT_VERSION,
+            "ip_hash": privacy_hash(request_ip(request)),
+            "user_agent_hash": privacy_hash(request.headers.get("user-agent", "")),
+            "operator_inn": OPERATOR_INN,
+        }
+        append_consent_audit(consent_event)
+
         cleanup_analyses()
         ANALYSES[analysis_id] = {
             "created_at": time.time(),
             "result": result,
             "paid": False,
             "payment_id": None,
+            "legal": {
+                "event_id": consent_event["event_id"],
+                "terms_version": TERMS_VERSION,
+                "privacy_version": PRIVACY_VERSION,
+                "consent_version": CONSENT_VERSION,
+            },
         }
 
         # ВАЖНО: до оплаты браузер получает только агрегаты, без категорий и транзакций.
@@ -1257,6 +1610,18 @@ h1{font-size:64px;line-height:.96;letter-spacing:-.06em;margin:0;max-width:720px
 .upload.selected .uploadPick{background:#f1f1ed;color:#333}
 
 input[type=file]{display:none}
+
+.legalConsent{
+  margin-top:14px;padding:14px 15px;border:1px solid var(--line);
+  background:#fafaf7;border-radius:11px;display:grid;gap:10px
+}
+.legalRow{display:flex;gap:9px;align-items:flex-start;font-size:9px;line-height:1.45;color:#555}
+.legalRow input{margin:2px 0 0;width:15px;height:15px;accent-color:#111;flex:0 0 auto}
+.legalRow a{color:#111;text-decoration:underline;text-underline-offset:2px}
+.legalMini{font-size:8px;color:#96968f;line-height:1.5;margin-top:1px}
+.legalFooter{margin-top:34px;padding:20px 0;border-top:1px solid var(--line);display:flex;gap:16px;flex-wrap:wrap;font-size:9px;color:#777}
+.legalFooter a{color:#555;text-decoration:none}.legalFooter a:hover{text-decoration:underline}
+
 .uploadBottom{display:flex;align-items:center;gap:11px;margin-top:13px}
 .parser{font-size:10px;color:var(--muted)}
 .loader{display:none;margin-top:14px}
@@ -1474,7 +1839,7 @@ th{color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.06e
 <body>
 <div class="wrap">
   <header class="header">
-    <div class="brand"><span class="brandMark">₽</span>Tax Radar <span class="beta">GUIDE 1.8.1</span></div>
+    <div class="brand"><span class="brandMark">₽</span>Tax Radar <span class="beta">LEGAL 1.9</span></div>
     <div class="secure"><span class="secureDot"></span>Файл не сохраняется после анализа</div>
   </header>
 
@@ -1489,7 +1854,7 @@ th{color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.06e
       </div>
     </div>
     <div class="preview">
-      <div class="previewTop"><span>Результат</span><span class="previewPill">GUIDE 1.8.1</span></div>
+      <div class="previewTop"><span>Результат</span><span class="previewPill">LEGAL 1.9</span></div>
       <div class="previewLabel">Можно вернуть</div>
       <div class="previewMoney">от 20 208 ₽</div>
       <div class="previewFast"><i>✓</i>15 078 ₽ — за 2 простых действия</div>
@@ -1516,6 +1881,21 @@ th{color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.06e
       </div>
       <span class="uploadPick" id="uploadPick">Выбрать файл</span>
     </label>
+
+    <div class="legalConsent">
+      <label class="legalRow">
+        <input type="checkbox" id="termsAccept">
+        <span>Я принимаю <a href="/terms" target="_blank">Пользовательское соглашение</a>
+        (версия 2026-08-27-v1).</span>
+      </label>
+      <label class="legalRow">
+        <input type="checkbox" id="pdConsent">
+        <span>Я отдельно даю <a href="/consent" target="_blank">Согласие на обработку персональных данных</a>
+        и ознакомился с <a href="/privacy" target="_blank">Политикой обработки персональных данных</a>.</span>
+      </label>
+      <div class="legalMini">Загружайте только банковскую выписку. Не загружайте медицинские документы, диагнозы или паспортные сканы.</div>
+    </div>
+
     <div class="uploadBottom">
       <button class="btn btnBrand" id="analyze" disabled>Найти вычеты</button>
       <span class="parser" id="parserHint">Файл передаётся по HTTPS и не сохраняется приложением</span>
@@ -1628,11 +2008,23 @@ th{color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.06e
       </div>
     </div>
   </section>
+
+  <footer class="legalFooter">
+    <a href="/terms">Пользовательское соглашение</a>
+    <a href="/privacy">Персональные данные</a>
+    <a href="/consent">Согласие на обработку ПДн</a>
+    <span>Оператор: Колосов Роман Михайлович · НПД · ИНН 772072450119</span>
+    <a href="mailto:inbox@sdelatvychet.ru">inbox@sdelatvychet.ru</a>
+  </footer>
 </div>
 <div class="toast" id="toast"></div>
 <script>
 let chosenFile=null,result=null,analysisId=null;
+const TERMS_VERSION='2026-08-27-v1',CONSENT_VERSION='2026-08-27-v1';
 const file=document.getElementById('file'),drop=document.getElementById('drop'),analyze=document.getElementById('analyze');
+const termsAccept=document.getElementById('termsAccept'),pdConsent=document.getElementById('pdConsent');
+function refreshAnalyzeButton(){analyze.disabled=!(chosenFile&&termsAccept.checked&&pdConsent.checked)}
+termsAccept.onchange=refreshAnalyzeButton;pdConsent.onchange=refreshAnalyzeButton;
 file.onchange=()=>setFile(file.files[0]);
 ['dragover','dragenter'].forEach(e=>drop.addEventListener(e,x=>{x.preventDefault();drop.classList.add('drag')}));
 ['dragleave','drop'].forEach(e=>drop.addEventListener(e,x=>{x.preventDefault();drop.classList.remove('drag')}));
@@ -1644,7 +2036,7 @@ function setFile(f){
   document.getElementById('fname').textContent=f.name;
   document.getElementById('fileSub').textContent=(f.size/1024/1024).toFixed(1)+' МБ · готово к анализу';
   document.getElementById('uploadPick').textContent='Заменить';
-  analyze.disabled=false;
+  refreshAnalyzeButton();
   document.getElementById('parserHint').textContent='После анализа исходный файл не сохраняется';
 }
 const rub=n=>new Intl.NumberFormat('ru-RU',{maximumFractionDigits:0}).format(n)+' ₽';
@@ -1660,7 +2052,12 @@ analyze.onclick=async()=>{
   document.getElementById('error').style.display='none';
   document.getElementById('loader').style.display='block';
   analyze.disabled=true;
-  const fd=new FormData();fd.append('file',chosenFile);
+  const fd=new FormData();
+  fd.append('file',chosenFile);
+  fd.append('terms_accepted',termsAccept.checked?'1':'0');
+  fd.append('pd_consent',pdConsent.checked?'1':'0');
+  fd.append('terms_version',TERMS_VERSION);
+  fd.append('consent_version',CONSENT_VERSION);
   try{
     const r=await fetch('/api/analyze',{method:'POST',body:fd});
     const data=await r.json();
@@ -1671,7 +2068,7 @@ analyze.onclick=async()=>{
   }catch(e){
     const er=document.getElementById('error');er.textContent=e.message;er.style.display='block'
   }finally{
-    document.getElementById('loader').style.display='none';analyze.disabled=false
+    document.getElementById('loader').style.display='none';refreshAnalyzeButton()
   }
 };
 
