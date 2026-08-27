@@ -21,7 +21,7 @@ from fastapi import FastAPI, File, UploadFile, HTTPException, Request, Form
 from fastapi.responses import HTMLResponse, JSONResponse, Response, RedirectResponse
 from pydantic import BaseModel
 
-app = FastAPI(title="СделатьВычет", version="2.3.0")
+app = FastAPI(title="СделатьВычет", version="2.3.1")
 
 
 REPORT_PRICE_RUB = 499
@@ -1245,7 +1245,7 @@ def legal_status():
 
 @app.get("/health")
 def health():
-    return {"ok": True, "version": "2.3.0", "legal_ready": legal_ready(), "service": "СделатьВычет"}
+    return {"ok": True, "version": "2.3.1", "legal_ready": legal_ready(), "service": "СделатьВычет"}
 
 
 @app.post("/api/analyze")
@@ -1685,8 +1685,8 @@ input[type=file]{display:none}
   .heroText{font-size:12px!important;line-height:1.6!important}
   .heroActions{align-items:flex-start!important;flex-direction:column!important}
   .preview{min-height:0!important}
-  .proofStrip,.featureGrid{grid-template-columns:1fr}
-  .featureCard h3{font-size:21px}
+  .proofStrip,
+  
   .uploaderHead{display:flex!important;flex-direction:column!important;align-items:flex-start!important;gap:12px!important}
   .formatPills{margin-left:0!important}
   .upload{padding:15px!important}
@@ -1736,7 +1736,7 @@ input[type=file]{display:none}
   .secure{max-width:130px;text-align:right;line-height:1.3}
   .hero h1{font-size:38px!important}
   .proofCard{padding:14px}
-  .featureCard{padding:16px}
+  
   .legalRow{font-size:9px}
 }
 
@@ -1745,16 +1745,16 @@ input[type=file]{display:none}
 .proofNum{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;background:#111;color:#fff;font-size:12px;font-weight:800;flex:0 0 auto}
 .proofCard b{display:block;font-size:12px;letter-spacing:-.02em}
 .proofCard span{display:block;margin-top:4px;font-size:10px;color:var(--muted);line-height:1.5}
-.featureGrid{display:grid;grid-template-columns:1.2fr .9fr .9fr;gap:12px;margin:0 0 20px}
-.featureCard{background:#fff;border:1px solid var(--line);border-radius:18px;padding:18px}
-.featureDark{background:#111;color:#fff;border-color:#111}
-.featureDark .featureKicker,.featureDark p{color:#b0b0aa}
-.featureCard h3{margin:8px 0 8px;font-size:23px;letter-spacing:-.04em;line-height:1.03}
-.featureCard p{margin:0;font-size:10px;color:var(--muted);line-height:1.6}
-.featureKicker{font-size:9px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:800}
-.featureList{margin:10px 0 0;padding:0;list-style:none;display:grid;gap:9px}
-.featureList li{font-size:10px;line-height:1.5;display:flex;gap:8px;align-items:flex-start}
-.featureList li:before{content:"✓";display:inline-grid;place-items:center;width:16px;height:16px;border-radius:50%;background:#eef8d1;color:#243700;font-size:10px;font-weight:900;flex:0 0 auto}
+
+
+
+
+
+
+
+
+
+
 .successBanner{display:none;margin:0 0 14px;padding:16px 18px;border-radius:14px;background:#efffcb;color:#334a00;border:1px solid #d9f0a2}
 .successBanner.show{display:block}
 .successBanner b{display:block;font-size:13px;letter-spacing:-.02em}
@@ -1764,7 +1764,7 @@ input[type=file]{display:none}
 .metricTile .label{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;font-weight:800}
 .metricTile .value{margin-top:7px;font-size:24px;letter-spacing:-.04em;font-weight:820}
 .metricTile .meta{margin-top:4px;color:var(--muted);font-size:9px;line-height:1.5}
-@media(max-width:900px){.proofStrip,.featureGrid,.metricTiles{grid-template-columns:1fr}}
+@media(max-width:900px){.proofStrip,.metricTiles{grid-template-columns:1fr}}
 
 .legalFooter{margin-top:34px;padding:20px 0;border-top:1px solid var(--line);display:flex;gap:16px;flex-wrap:wrap;font-size:9px;color:#777}
 .legalFooter a{color:#555;text-decoration:none}.legalFooter a:hover{text-decoration:underline}
@@ -2010,7 +2010,7 @@ th{color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.06e
       </div>
     </div>
     <div class="preview">
-      <div class="previewTop"><span>Результат</span><span class="previewPill">SDELATVYCHET 2.3.0</span></div>
+      <div class="previewTop"><span>Результат</span><span class="previewPill">SDELATVYCHET 2.3.1</span></div>
       <div class="previewLabel">Потенциальный вычет</div>
       <div class="previewMoney">от 20 208 ₽</div>
       <div class="previewFast"><i>✓</i>Сразу покажем, где искать вычет</div>
@@ -2033,30 +2033,6 @@ th{color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.06e
     <div class="proofCard">
       <div class="proofNum">3</div>
       <div><b>Откройте готовый план</b><span>После оплаты получите понятный отчёт, тексты запросов и маршрут до подачи.</span></div>
-    </div>
-  </section>
-
-  <section class="featureGrid">
-    <div class="featureCard featureDark">
-      <div class="featureKicker">Зачем это нужно</div>
-      <h3>Не нужно вручную перечитывать выписку и искать клиники, фитнес, обучение или страхование</h3>
-      <p>СделатьВычет сам находит потенциальные расходы, оценивает сумму и превращает хаос банковских операций в понятный план действий.</p>
-    </div>
-    <div class="featureCard">
-      <div class="featureKicker">До оплаты</div>
-      <ul class="featureList">
-        <li>сколько расходов нашли</li>
-        <li>от какой суммы возврата можно отталкиваться</li>
-        <li>стоит ли идти дальше</li>
-      </ul>
-    </div>
-    <div class="featureCard">
-      <div class="featureKicker">После оплаты</div>
-      <ul class="featureList">
-        <li>разбивка по операциям и категориям</li>
-        <li>организации и нужные документы</li>
-        <li>готовый маршрут до подачи вычета</li>
-      </ul>
     </div>
   </section>
 
