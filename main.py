@@ -20,7 +20,7 @@ from fastapi import FastAPI, File, UploadFile, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response, RedirectResponse
 from pydantic import BaseModel
 
-app = FastAPI(title="Tax Radar", version="1.7.0")
+app = FastAPI(title="Tax Radar", version="1.8.0")
 
 
 REPORT_PRICE_RUB = 499
@@ -914,7 +914,7 @@ def index():
 
 @app.get("/health")
 def health():
-    return {"ok": True, "version": "1.7.0"}
+    return {"ok": True, "version": "1.8.0"}
 
 
 @app.post("/api/analyze")
@@ -1337,6 +1337,86 @@ input[type=file]{display:none}
 .extraBody .batchItem{border-color:#2b2b28;color:#aaa}
 .extraBody .batchItem b{color:#fff}
 
+
+.journey{
+  margin-top:24px;border:1px solid var(--line);border-radius:16px;overflow:hidden;background:#fff;
+}
+.journeyHero{
+  padding:24px 24px 20px;background:#111;color:#fff;
+  display:grid;grid-template-columns:1fr auto;gap:22px;align-items:end
+}
+.journeyEyebrow{font-size:9px;text-transform:uppercase;letter-spacing:.1em;color:#92928d;font-weight:800}
+.journeyHero h2{margin:8px 0 5px;font-size:24px;letter-spacing:-.04em}
+.journeyHero p{margin:0;color:#aaa9a3;font-size:10px;line-height:1.5;max-width:650px}
+.journeyMoney{text-align:right}
+.journeyMoney span{display:block;font-size:9px;color:#92928d;text-transform:uppercase;letter-spacing:.08em}
+.journeyMoney b{display:block;font-size:27px;letter-spacing:-.04em;margin-top:4px}
+.progressLine{height:4px;background:#292927}
+.progressFill{height:100%;width:0;background:var(--accent);transition:width .25s ease}
+.journeyBody{padding:0 24px}
+.guideStep{
+  display:grid;grid-template-columns:38px 1fr;gap:14px;padding:22px 0;border-bottom:1px solid var(--line)
+}
+.guideStep:last-child{border-bottom:0}
+.guideCheck{
+  width:32px;height:32px;border-radius:50%;border:1px solid var(--line2);background:#fafaf7;
+  display:grid;place-items:center;font-size:11px;font-weight:800;cursor:pointer;transition:.16s ease
+}
+.guideStep.done .guideCheck{background:var(--accent);border-color:var(--accent);color:#152000}
+.guideStep.done .guideTitle{text-decoration:line-through;text-decoration-color:#c8c8c0;color:#777}
+.guideTop{display:flex;justify-content:space-between;align-items:flex-start;gap:14px}
+.guideKicker{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;font-weight:800}
+.guideTitle{font-size:16px;font-weight:800;letter-spacing:-.025em;margin-top:3px}
+.guideDesc{font-size:10px;color:var(--muted);line-height:1.55;margin-top:6px;max-width:760px}
+.guideTag{white-space:nowrap;border:1px solid var(--line);border-radius:999px;padding:5px 7px;font-size:8px;color:var(--muted);font-weight:800}
+.guideInside{margin-top:13px}
+.clickPath{
+  display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:11px 12px;
+  background:#fafaf7;border:1px solid var(--line);border-radius:10px;font-size:10px
+}
+.clickPath b{font-weight:800}
+.chev{color:#aaa}
+.guideButtons{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.guideBtn{
+  border:0;background:#111;color:#fff;padding:9px 11px;border-radius:8px;
+  font-size:9px;font-weight:800;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center
+}
+.guideBtn.secondary{background:#fff;color:#222;border:1px solid var(--line)}
+.routeGrid{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:12px}
+.routeCard{border:1px solid var(--line);border-radius:11px;padding:13px;background:#fff}
+.routeCard.recommended{border-color:#c5da8e;background:#fbfff2}
+.routeBadge{display:inline-block;font-size:8px;text-transform:uppercase;letter-spacing:.07em;font-weight:800;color:#546b1a;background:#eaffb9;border-radius:999px;padding:4px 6px;margin-bottom:7px}
+.routeCard b{display:block;font-size:12px}
+.routeCard p{margin:5px 0 0;color:var(--muted);font-size:9px;line-height:1.5}
+.providerList{display:grid;gap:7px;margin-top:10px}
+.providerRow{
+  display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;
+  padding:10px 11px;border:1px solid var(--line);border-radius:10px
+}
+.providerName{font-size:10px;font-weight:800}
+.providerMeta{font-size:9px;color:var(--muted);margin-top:3px}
+.providerAction{border:0;background:transparent;font-size:9px;font-weight:800;text-decoration:underline;text-underline-offset:3px;cursor:pointer}
+.guideNote{
+  margin-top:10px;padding:10px 11px;background:#f7f5eb;border-radius:9px;
+  color:#71683e;font-size:9px;line-height:1.5
+}
+.guideAlert{
+  margin-top:10px;padding:10px 11px;background:#fff5f2;border:1px solid #f2ded8;border-radius:9px;
+  color:#8c493c;font-size:9px;line-height:1.5
+}
+.categoryGuide{display:flex;gap:6px;flex-wrap:wrap;margin-top:9px}
+.categoryGuide span{font-size:8px;padding:5px 7px;border:1px solid var(--line);border-radius:999px;background:#fff}
+.guideDoneMessage{display:none;margin:0 24px 22px;padding:14px;border-radius:11px;background:#efffcb;color:#334a00;font-size:10px;font-weight:750}
+@media(max-width:820px){
+  .journeyHero{grid-template-columns:1fr}
+  .journeyMoney{text-align:left}
+  .journeyBody{padding:0 18px}
+  .journeyHero{padding:21px 18px}
+  .routeGrid{grid-template-columns:1fr}
+  .providerRow{grid-template-columns:1fr}
+  .guideTop{flex-direction:column}
+}
+
 .packetRow{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:22px 0 0;margin-top:18px;border-top:1px solid var(--line)}
 .packetRow b{font-size:13px}
 .packetRow p{margin:4px 0 0;color:var(--muted);font-size:10px}
@@ -1394,7 +1474,7 @@ th{color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.06e
 <body>
 <div class="wrap">
   <header class="header">
-    <div class="brand"><span class="brandMark">₽</span>Tax Radar <span class="beta">UNIVERSAL 1.7</span></div>
+    <div class="brand"><span class="brandMark">₽</span>Tax Radar <span class="beta">GUIDE 1.8</span></div>
     <div class="secure"><span class="secureDot"></span>Файл не сохраняется после анализа</div>
   </header>
 
@@ -1409,7 +1489,7 @@ th{color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.06e
       </div>
     </div>
     <div class="preview">
-      <div class="previewTop"><span>Результат</span><span class="previewPill">UNIVERSAL 1.7</span></div>
+      <div class="previewTop"><span>Результат</span><span class="previewPill">GUIDE 1.8</span></div>
       <div class="previewLabel">Можно вернуть</div>
       <div class="previewMoney">от 20 208 ₽</div>
       <div class="previewFast"><i>✓</i>15 078 ₽ — за 2 простых действия</div>
@@ -1494,10 +1574,28 @@ th{color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.06e
 
       <div class="resultBody">
         <div class="sectionTitleRow">
-          <div><h2>Что нужно сделать</h2><p id="actionLead">Мы соберём операции в несколько понятных шагов.</p></div>
+          <div><h2>Что Tax Radar подготовил</h2><p id="actionLead">Готовые запросы и уточнения по найденным расходам.</p></div>
           <div class="tiny" id="foundLabel"></div>
         </div>
         <div class="groups" id="groups"></div>
+
+        <section class="journey" id="journey">
+          <div class="journeyHero">
+            <div>
+              <div class="journeyEyebrow">Персональный маршрут</div>
+              <h2>Как дойти от отчёта до вычета</h2>
+              <p id="journeyIntro">Мы убрали налоговую бюрократию в четыре последовательных шага. Выполняйте сверху вниз.</p>
+            </div>
+            <div class="journeyMoney"><span>Ваш ориентир</span><b id="journeyRefund">—</b></div>
+          </div>
+          <div class="progressLine"><div class="progressFill" id="guideProgress"></div></div>
+          <div class="journeyBody" id="journeyBody"></div>
+          <div class="guideDoneMessage" id="guideDoneMessage">✓ Всё готово. Теперь осталось дождаться результата рассмотрения в ФНС.</div>
+        </section>
+
+        <div class="sectionTitleRow" style="margin-top:28px">
+          <div><h2>Детали отчёта</h2><p>Здесь можно проверить операции, подготовить запросы и скорректировать расчёт.</p></div>
+        </div>
         <div class="actions" id="actions"></div>
 
         <div class="extra" id="extra">
@@ -1652,6 +1750,141 @@ async function resumeAfterPayment(){
 }
 window.addEventListener('DOMContentLoaded',resumeAfterPayment);
 
+
+const FNS_LK_URL='https://lkfl2.nalog.ru/lkfl/';
+const GUIDE_STORAGE_PREFIX='taxRadarGuide:';
+
+function guideStorageKey(){
+  return GUIDE_STORAGE_PREFIX+(analysisId||'demo');
+}
+function getGuideState(){
+  try{return JSON.parse(localStorage.getItem(guideStorageKey())||'{}')}catch(e){return {}}
+}
+function setGuideState(state){
+  localStorage.setItem(guideStorageKey(),JSON.stringify(state));
+}
+function toggleGuideStep(step){
+  const st=getGuideState();st[step]=!st[step];setGuideState(st);renderJourney();
+}
+function guideCompletedCount(){
+  const st=getGuideState();return [1,2,3,4].filter(x=>st[x]).length
+}
+function providerGroups(items){
+  const by={};
+  items.forEach(c=>{
+    const key=c.year+'||'+c.category+'||'+c.merchant;
+    (by[key]??=[]).push(c)
+  });
+  return Object.values(by);
+}
+function categoryDoc(category){
+  const docs={
+    medicine:'справку об оплате медицинских услуг (КНД 1151156)',
+    fitness:'справку об оплате физкультурно‑оздоровительных услуг (КНД 1151160)',
+    education:'справку об оплате образовательных услуг (КНД 1151158)',
+    insurance:'справку об уплате страховых взносов (КНД 1151159)'
+  };
+  return docs[category]||'подтверждающий документ';
+}
+function requestTextFor(arr){
+  const c=arr[0],year=c.year,dates=arr.map(x=>x.date+' — '+rub(x.amount)).join('; ');
+  if(c.category==='medicine')return `Здравствуйте! Прошу направить в ФНС сведения о моих расходах на медицинские услуги за ${year} год для получения социального налогового вычета. Если электронная передача в ФНС невозможна, прошу выдать справку об оплате медицинских услуг для налогового органа (КНД 1151156). Найденные мной оплаты: ${dates}.`;
+  if(c.category==='fitness')return `Здравствуйте! Прошу направить в ФНС сведения о моих расходах на физкультурно-оздоровительные услуги за ${year} год для получения социального налогового вычета. Если электронная передача невозможна, прошу выдать справку для налогового органа (КНД 1151160). Найденные оплаты: ${dates}.`;
+  if(c.category==='education')return `Здравствуйте! Прошу направить в ФНС сведения о расходах на обучение за ${year} год для получения социального налогового вычета. Если электронная передача невозможна, прошу выдать справку для налогового органа (КНД 1151158). Найденные оплаты: ${dates}.`;
+  if(c.category==='insurance')return `Здравствуйте! Прошу сообщить вид договора и, если он даёт право на социальный налоговый вычет, направить в ФНС сведения об уплаченных страховых взносах за ${year} год. Если электронная передача невозможна, прошу выдать справку для налогового органа (КНД 1151159). Найденные оплаты: ${dates}.`;
+  return `Здравствуйте! Прошу предоставить документы, подтверждающие расходы за ${year} год для налогового вычета. Найденные оплаты: ${dates}.`;
+}
+function buildProviderRows(items){
+  const groups=providerGroups(items);
+  if(!groups.length)return '<div class="guideNote">По этим категориям отдельные справки не найдены.</div>';
+  return `<div class="providerList">${groups.map(arr=>{
+    const c=arr[0],sum=arr.reduce((s,x)=>s+x.amount,0),txt=requestTextFor(arr);
+    return `<div class="providerRow">
+      <div><div class="providerName">${c.emoji} ${escapeHtml(c.merchant)}</div><div class="providerMeta">${c.year} · ${arr.length} ${arr.length===1?'оплата':'оплат'} · ${rub(sum)} · ${escapeHtml(categoryDoc(c.category))}</div></div>
+      <button class="providerAction" onclick='copyText(${JSON.stringify(txt)})'>Скопировать запрос</button>
+    </div>`
+  }).join('')}</div>`
+}
+function buildMedicinePharmacyNote(pharmacy){
+  if(!pharmacy.length)return '';
+  return `<div class="guideAlert"><b>Лекарства — отдельный путь.</b> По ${pharmacy.length} найденным аптечным покупкам одной справки от аптеки недостаточно. Сначала проверьте, есть ли назначение врача: рецепт или сведения из выписного эпикриза. Затем сохраните подтверждение оплаты.</div>`;
+}
+function renderJourney(){
+  if(!result)return;
+  const s=selected(),st=getGuideState();
+  const serviceDocs=s.filter(c=>['medicine','fitness','education','insurance'].includes(c.category));
+  const pharmacy=s.filter(c=>c.category==='pharmacy');
+  const years=[...new Set(s.map(c=>c.year).filter(Boolean))].sort();
+  const cats=[...new Set(s.map(c=>c.category_name))];
+
+  const steps=[];
+  steps.push(`
+    <div class="guideStep ${st[1]?'done':''}">
+      <button class="guideCheck" onclick="toggleGuideStep(1)">${st[1]?'✓':'1'}</button>
+      <div>
+        <div class="guideTop"><div><div class="guideKicker">Шаг 1 · 2 минуты</div><div class="guideTitle">Сначала проверьте, что ФНС уже знает</div></div><span class="guideTag">не запрашивайте лишние справки</span></div>
+        <div class="guideDesc">Организация могла сама передать сведения о расходах. Тогда повторно писать в клинику, фитнес или страховую не нужно.</div>
+        <div class="guideInside">
+          <div class="clickPath"><b>ЛК ФНС</b><span class="chev">→</span><b>Вычеты</b><span class="chev">→</span><b>Сведения по социальным вычетам</b></div>
+          <div class="guideButtons"><a class="guideBtn" href="${FNS_LK_URL}" target="_blank" rel="noopener">Открыть ЛК ФНС ↗</a><button class="guideBtn secondary" onclick="toggleGuideStep(1)">Я проверил</button></div>
+          <div class="guideNote">Если нужная организация и сумма уже отображаются — переходите к шагу 3. Если нет — шаг 2 покажет, кому написать.</div>
+        </div>
+      </div>
+    </div>`);
+
+  steps.push(`
+    <div class="guideStep ${st[2]?'done':''}">
+      <button class="guideCheck" onclick="toggleGuideStep(2)">${st[2]?'✓':'2'}</button>
+      <div>
+        <div class="guideTop"><div><div class="guideKicker">Шаг 2 · только если данных нет в ФНС</div><div class="guideTitle">Запросите недостающие подтверждения</div></div><span class="guideTag">${providerGroups(serviceDocs).length} запросов</span></div>
+        <div class="guideDesc">Просите организацию в первую очередь <b>передать сведения напрямую в ФНС</b>. Если технически не может — получить унифицированную справку.</div>
+        <div class="categoryGuide">${cats.map(x=>`<span>${escapeHtml(x)}</span>`).join('')}</div>
+        <div class="guideInside">${buildProviderRows(serviceDocs)}${buildMedicinePharmacyNote(pharmacy)}
+          <div class="guideButtons"><button class="guideBtn secondary" onclick="toggleGuideStep(2)">Запросы отправлены</button></div>
+        </div>
+      </div>
+    </div>`);
+
+  steps.push(`
+    <div class="guideStep ${st[3]?'done':''}">
+      <button class="guideCheck" onclick="toggleGuideStep(3)">${st[3]?'✓':'3'}</button>
+      <div>
+        <div class="guideTop"><div><div class="guideKicker">Шаг 3 · выберите один путь</div><div class="guideTitle">Подайте вычет через Личный кабинет ФНС</div></div><span class="guideTag">${years.join(', ')||'нужный год'}</span></div>
+        <div class="guideDesc">Tax Radar не заставляет вас заранее разбираться, нужна ли 3‑НДФЛ. Посмотрите, появились ли сведения в ФНС после шагов 1–2.</div>
+        <div class="routeGrid">
+          <div class="routeCard recommended">
+            <span class="routeBadge">проще</span>
+            <b>Если сведения появились в ФНС</b>
+            <p>Откройте «Вычеты → Вычеты в упрощённом порядке». ФНС формирует предзаполненное заявление; проверьте данные и утвердите его. Декларация 3‑НДФЛ и загрузка справок не нужны.</p>
+          </div>
+          <div class="routeCard">
+            <b>Если сведений в ФНС нет</b>
+            <p>Откройте «Вычеты → Декларации → Подать декларацию». Выберите нужный год, добавьте социальные вычеты и внесите данные из полученных справок. Для лекарств приложите назначение врача и подтверждение оплаты.</p>
+          </div>
+        </div>
+        <div class="guideButtons"><a class="guideBtn" href="${FNS_LK_URL}" target="_blank" rel="noopener">Перейти в ФНС ↗</a><button class="guideBtn secondary" onclick="toggleGuideStep(3)">Заявление отправлено</button></div>
+      </div>
+    </div>`);
+
+  steps.push(`
+    <div class="guideStep ${st[4]?'done':''}">
+      <button class="guideCheck" onclick="toggleGuideStep(4)">${st[4]?'✓':'4'}</button>
+      <div>
+        <div class="guideTop"><div><div class="guideKicker">Шаг 4 · финиш</div><div class="guideTitle">Следите за статусом в ФНС</div></div><span class="guideTag">ничего больше собирать не нужно</span></div>
+        <div class="guideDesc">После отправки проверяйте уведомления и статус заявления/декларации в Личном кабинете. Если ФНС запросит уточнение — отвечайте через то же обращение и прикладывайте только запрошенные документы.</div>
+        <div class="guideInside"><div class="clickPath"><b>ЛК ФНС</b><span class="chev">→</span><b>Вычеты / Декларации</b><span class="chev">→</span><b>Статус обращения</b></div>
+        <div class="guideButtons"><button class="guideBtn secondary" onclick="toggleGuideStep(4)">Готово</button></div></div>
+      </div>
+    </div>`);
+
+  document.getElementById('journeyBody').innerHTML=steps.join('');
+  const done=guideCompletedCount();
+  document.getElementById('guideProgress').style.width=(done/4*100)+'%';
+  document.getElementById('guideDoneMessage').style.display=done===4?'block':'none';
+  document.getElementById('journeyRefund').textContent='от '+rub(subsetRefund(s));
+  document.getElementById('journeyIntro').textContent=`${s.length} найденных расходов мы превратили в 4 последовательных шага. Отмечайте выполненное — прогресс сохранится в браузере.`;
+}
+
 function buildBatch(items){
   const by={};items.forEach(c=>{const k=c.category+'||'+c.merchant;(by[k]??=[]).push(c)});let html='';
   Object.values(by).forEach(arr=>{const c=arr[0],sum=arr.reduce((s,x)=>s+x.amount,0);let req=c.category==='medicine'?'Прошу предоставить справку об оплате медицинских услуг для оформления налогового вычета.':c.category==='fitness'?'Прошу предоставить документы/сведения об оплате услуг для оформления спортивного налогового вычета.':'Прошу предоставить подтверждение оплаты услуг для оформления налогового вычета.';const txt=`Здравствуйте! ${req} Найденные оплаты: ${arr.map(x=>x.date+' — '+rub(x.amount)).join('; ')}.`;html+=`<div class="batchItem"><b>${escapeHtml(c.merchant)} · ${rub(sum)}</b>${arr.length} оплат · ${c.category_name}<div class="copy" onclick='copyText(${JSON.stringify(txt)})'>Скопировать готовый запрос →</div></div>`});return html
@@ -1665,6 +1898,7 @@ function renderActions(){
   document.getElementById('actions').innerHTML=html||'<div class="actionCard"><div class="actionNo">✓</div><div><div class="actionName">Основной план уже готов</div><div class="actionDesc">Осталось проверить дополнительные расходы или скачать пакет.</div></div></div>';
   document.getElementById('refund').innerHTML='<span class="from">от</span>'+rub(total);document.getElementById('fastRefund').textContent='от '+rub(fastR);document.getElementById('fastText').textContent=count?`${fastR?Math.round(fastR/Math.max(total,1)*100):0}% найденного возврата — за ${count} ${count===1?'действие':'действия'}.`:'Сначала проверьте найденные операции.';document.getElementById('actionLead').textContent=count?`Вместо ${s.length} отдельных операций — всего ${count} ${count===1?'действие':'действия'}.`:'Сложные расходы вынесены отдельно.';
   const ex=document.getElementById('extra');if(extras.length){ex.style.display='block';document.getElementById('extraMoney').textContent='Ещё до '+rub(extra);const cats=[...new Set(extras.map(c=>c.category_name))];document.getElementById('extraText').textContent=`${cats.join(', ')} — ${extras.length} операций. Здесь нужно больше ручных подтверждений, поэтому они не мешают основному сценарию.`;document.getElementById('extraBody').innerHTML=extras.map(c=>`<div class="batchItem"><b>${c.emoji} ${escapeHtml(c.merchant)} · ${rub(c.amount)}</b>${c.date} · ${escapeHtml(c.note)}</div>`).join('')}else ex.style.display='none';
+  renderJourney();
 }
 function toggleBatch(){const e=document.getElementById('batch');if(e)e.style.display=e.style.display==='block'?'none':'block'}
 function toggleQuestions(){const e=document.getElementById('questionBox');if(e)e.style.display=e.style.display==='block'?'none':'block'}
