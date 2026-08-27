@@ -20,7 +20,7 @@ from fastapi import FastAPI, File, UploadFile, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response, RedirectResponse
 from pydantic import BaseModel
 
-app = FastAPI(title="Tax Radar", version="1.5.0")
+app = FastAPI(title="Tax Radar", version="1.6.1")
 
 
 REPORT_PRICE_RUB = 499
@@ -86,8 +86,8 @@ CATEGORY_META = {
 }
 
 RULES = [
-    ("medicine", [r"MCC(?:8011|8062|8099|8021|8031|8041|8042|8049)\b", r"\bMEDSI\b", r"\bMEDSKAN\w*\b", r"\bKLINIKA\b", r"КЛИНИК", r"MEDICINSK", r"МЕДИЦ", r"STOMAT", r"СТОМАТ", r"\bDENT(?:AL)?\b", r"КОСМЕТОЛ", r"\bBESTCLIN"]),
-    ("pharmacy", [r"MCC5912\b", r"\bAPTEKA\b", r"АПТЕК", r"\bGORZDRAV\b", r"\bMSKAPT"]),
+    ("medicine", [r"MCC(?:8011|8062|8099|8021|8031|8041|8042|8049)\b", r"MEDSI(?:\b|_)", r"DERAJS", r"DERAYS", r"ДЭРАЙС", r"\bMEDSKAN\w*\b", r"\bKLINIKA\b", r"КЛИНИК", r"MEDICINSK", r"МЕДИЦ", r"STOMAT", r"СТОМАТ", r"\bDENT(?:AL)?\b", r"КОСМЕТОЛ", r"\bBESTCLIN"]),
+    ("pharmacy", [r"MCC5912\b", r"\bAPTEKA\b", r"АПТЕК", r"АПТЕЧ", r"\bGORZDRAV\b", r"\bMSKAPT"]),
     ("fitness", [r"MCC7997\b", r"\bSTROYTELO\b", r"\bFITNESS\b", r"\bFITNES\b", r"ФИТНЕС", r"\bEMS\b"]),
     ("education", [r"MCC(?:8220|8241|8244|8249|8351)\b", r"\bSKILLBOX\b", r"\bNETOLOGY\b", r"GEEKBRAINS", r"\bUNIVERS", r"УНИВЕРСИТ", r"\bSCHOOL\b", r"ШКОЛ", r"\bCOURSE\b", r"КУРС"]),
     ("insurance", [r"ИНГОССТРАХ", r"\bINGOS", r"\bINSURANCE\b", r"СТРАХОВ", r"MCC6300\b"]),
@@ -233,6 +233,140 @@ def parse_tbank_pdf_text(text: str) -> list[dict[str, Any]]:
     return txs
 
 
+
+SBER_PAIR_RE = re.compile(
+    r"(?m)^(\d{2}\.\d{2}\.\d{4})\n"
+    r"(\d{2}\.\d{2}\.\d{4})\n"
+    r"(\d{2}:\d{2})\n"
+    r"(\d{6})\n"
+)
+
+SBER_AMOUNT_LINE_RE = re.compile(
+    r"^\s*(\+?\d[\d\u00a0 ]*,\d{2})(?:\s+.*)?$"
+)
+
+
+def extract_sber_merchant(description: str) -> str:
+    s = normalize(description)
+
+    # Strip the standard card suffix.
+    s = re.sub(r"\s*Операция по карте\s+\*+\d{4}\s*$", "", s, flags=re.I).strip()
+
+    # Strip standard SBP boilerplate.
+    s = re.sub(
+        r"\s*Покупка по СБП в ТСТ (?:другого банка|Сбербанка)\.*\s*$",
+        "",
+        s,
+        flags=re.I,
+    ).strip()
+
+    # Strip common location prefixes from merchant descriptors.
+    s = re.sub(
+        r"^(?:MOSCOW|MOSKVA|SANKT-PETERBU|Krasnogorsk)\s+",
+        "",
+        s,
+        flags=re.I,
+    ).strip()
+
+    # QR suffixes are noise for merchant presentation, but keeping merchant stem is useful.
+    s = re.sub(r"_(?:P|E)_QR\.?$", "", s, flags=re.I).strip()
+
+    return s[:100] or "Операция"
+
+
+def parse_sber_pdf_text(text: str) -> list[dict[str, Any]]:
+    """
+    Parse Sber's 'Выписка по счёту кредитной карты'.
+
+    Stable block structure:
+      operation date
+      posting date
+      time
+      6-digit authorization code
+      bank category
+      merchant/description
+      amount in RUB [and balance]
+      optional foreign-currency amount
+      balance
+    """
+    pairs = list(SBER_PAIR_RE.finditer(text))
+    if not pairs:
+        raise ValueError("Не удалось найти операции в выписке Сбера.")
+
+    txs: list[dict[str, Any]] = []
+
+    for i, pair in enumerate(pairs):
+        end = pairs[i + 1].start() if i + 1 < len(pairs) else len(text)
+        block = text[pair.end():end]
+
+        # Remove repeated page headers/footers and document footer.
+        for marker in (
+            "Продолжение на следующей странице",
+            "Дата формирования документа",
+            "Выписка по счёту кредитной карты Страница",
+        ):
+            pos = block.find(marker)
+            if pos >= 0:
+                block = block[:pos]
+
+        lines = [ln.strip() for ln in block.splitlines() if ln.strip()]
+        if len(lines) < 2:
+            continue
+
+        bank_category = lines[0]
+        amount_idx = None
+        raw_amount = None
+
+        # First amount-looking line after category is the transaction RUB amount.
+        # The second number on the same line, if present, is the running balance.
+        for j, line in enumerate(lines[1:], start=1):
+            m = SBER_AMOUNT_LINE_RE.match(line)
+            if m:
+                raw_amount = m.group(1)
+                amount_idx = j
+                break
+
+        if amount_idx is None or raw_amount is None:
+            continue
+
+        description = normalize(" ".join(lines[1:amount_idx]))
+        amount_abs = money_to_float(raw_amount.replace("+", ""))
+
+        category_lower = bank_category.lower()
+        desc_lower = description.lower()
+
+        is_credit = (
+            raw_amount.startswith("+")
+            or "возврат" in category_lower
+            or "перевод на карту" in category_lower
+            or "пополнение" in category_lower
+            or "зачислен" in category_lower
+            or "возврат" in desc_lower
+        )
+        amount = amount_abs if is_credit else -amount_abs
+
+        card_match = re.search(r"\*+(\d{4})", description)
+        card_last4 = card_match.group(1) if card_match else ""
+
+        txs.append({
+            "date": pair.group(1),
+            "code": f"SBER_{pair.group(4)}_{i + 1:04d}",
+            # Include Sber's category in searchable description but keep merchant separately.
+            "description": f"{bank_category} {description}",
+            "merchant": extract_sber_merchant(description),
+            "amount": amount,
+            "bank": "Сбер",
+            "posting_date": pair.group(2),
+            "auth_code": pair.group(4),
+            "card_last4": card_last4,
+            "bank_category": bank_category,
+        })
+
+    if not txs:
+        raise ValueError("Не удалось распознать операции в выписке Сбера.")
+    return txs
+
+
 def parse_alfa_pdf_text(text: str) -> list[dict[str, Any]]:
     txs = []
     for m in TX_RE.finditer(text):
@@ -265,6 +399,17 @@ def detect_pdf_bank_from_text(text: str) -> str:
     upper = text.upper()
 
     if (
+        "СБЕРБАНК" in upper
+        or "SBERBANK.RU" in upper
+        or "ПАО СБЕРБАНК" in upper
+    ) and (
+        "ВЫПИСКА ПО СЧЁТУ КРЕДИТНОЙ КАРТЫ" in upper
+        or "РАСШИФРОВКА ОПЕРАЦИЙ" in upper
+        or SBER_PAIR_RE.search(text)
+    ):
+        return "sber"
+
+    if (
         "ТБАНК" in upper
         or "Т-БАНК" in upper
         or "TBANK.RU" in upper
@@ -285,6 +430,10 @@ def parse_alfa_pdf(data: bytes) -> list[dict[str, Any]]:
 
 def parse_tbank_pdf(data: bytes) -> list[dict[str, Any]]:
     return parse_tbank_pdf_text(extract_pdf_text(data))
+
+
+def parse_sber_pdf(data: bytes) -> list[dict[str, Any]]:
+    return parse_sber_pdf_text(extract_pdf_text(data))
 
 def _guess_column(headers: list[str], variants: list[str]) -> str | None:
     low = {h.lower().strip(): h for h in headers}
@@ -425,7 +574,7 @@ def index():
 
 @app.get("/health")
 def health():
-    return {"ok": True, "version": "1.5.0"}
+    return {"ok": True, "version": "1.6.1"}
 
 
 @app.post("/api/analyze")
@@ -440,12 +589,14 @@ async def analyze(file: UploadFile = File(...)):
         if name.endswith(".pdf"):
             pdf_text = extract_pdf_text(data)
             bank = detect_pdf_bank_from_text(pdf_text)
-            if bank == "tbank":
+            if bank == "sber":
+                txs, parser = parse_sber_pdf_text(pdf_text), "Сбер PDF"
+            elif bank == "tbank":
                 txs, parser = parse_tbank_pdf_text(pdf_text), "Т-Банк PDF"
             elif bank == "alfa":
                 txs, parser = parse_alfa_pdf_text(pdf_text), "Альфа-Банк PDF"
             else:
-                raise ValueError("Не удалось определить формат PDF. Сейчас поддерживаются выписки Альфа-Банка и Т-Банка.")
+                raise ValueError("Не удалось определить формат PDF. Сейчас поддерживаются выписки Альфа-Банка, Т-Банка и Сбера.")
         elif name.endswith(".csv"):
             txs, parser = parse_csv(data), "CSV"
         elif name.endswith(".xlsx") or name.endswith(".xlsm"):
@@ -884,7 +1035,7 @@ th{color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.06e
 <body>
 <div class="wrap">
   <header class="header">
-    <div class="brand"><span class="brandMark">₽</span>Tax Radar <span class="beta">PAID 1.5</span></div>
+    <div class="brand"><span class="brandMark">₽</span>Tax Radar <span class="beta">PAID 1.6.1</span></div>
     <div class="secure"><span class="secureDot"></span>Файл не сохраняется после анализа</div>
   </header>
 
@@ -899,7 +1050,7 @@ th{color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.06e
       </div>
     </div>
     <div class="preview">
-      <div class="previewTop"><span>Результат</span><span class="previewPill">PAID 1.5</span></div>
+      <div class="previewTop"><span>Результат</span><span class="previewPill">PAID 1.6.1</span></div>
       <div class="previewLabel">Можно вернуть</div>
       <div class="previewMoney">от 20 208 ₽</div>
       <div class="previewFast"><i>✓</i>15 078 ₽ — за 2 простых действия</div>
@@ -921,7 +1072,7 @@ th{color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.06e
         <div class="uploadIcon">↥</div>
         <div class="uploadMeta">
           <div class="uploadTitle" id="fname">Выберите банковскую выписку</div>
-          <div class="uploadSub" id="fileSub">Альфа-Банк / Т-Банк · PDF, CSV или XLSX · до 30 МБ</div>
+          <div class="uploadSub" id="fileSub">Альфа / Т-Банк / Сбер · PDF, CSV или XLSX · до 30 МБ</div>
         </div>
       </div>
       <span class="uploadPick" id="uploadPick">Выбрать файл</span>
