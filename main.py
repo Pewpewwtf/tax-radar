@@ -20,7 +20,7 @@ from fastapi import FastAPI, File, UploadFile, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response, RedirectResponse
 from pydantic import BaseModel
 
-app = FastAPI(title="Tax Radar", version="1.8.0")
+app = FastAPI(title="Tax Radar", version="1.8.1")
 
 
 REPORT_PRICE_RUB = 499
@@ -914,7 +914,7 @@ def index():
 
 @app.get("/health")
 def health():
-    return {"ok": True, "version": "1.8.0"}
+    return {"ok": True, "version": "1.8.1"}
 
 
 @app.post("/api/analyze")
@@ -1474,7 +1474,7 @@ th{color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.06e
 <body>
 <div class="wrap">
   <header class="header">
-    <div class="brand"><span class="brandMark">₽</span>Tax Radar <span class="beta">GUIDE 1.8</span></div>
+    <div class="brand"><span class="brandMark">₽</span>Tax Radar <span class="beta">GUIDE 1.8.1</span></div>
     <div class="secure"><span class="secureDot"></span>Файл не сохраняется после анализа</div>
   </header>
 
@@ -1489,7 +1489,7 @@ th{color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.06e
       </div>
     </div>
     <div class="preview">
-      <div class="previewTop"><span>Результат</span><span class="previewPill">GUIDE 1.8</span></div>
+      <div class="previewTop"><span>Результат</span><span class="previewPill">GUIDE 1.8.1</span></div>
       <div class="previewLabel">Можно вернуть</div>
       <div class="previewMoney">от 20 208 ₽</div>
       <div class="previewFast"><i>✓</i>15 078 ₽ — за 2 простых действия</div>
@@ -1584,7 +1584,7 @@ th{color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.06e
             <div>
               <div class="journeyEyebrow">Персональный маршрут</div>
               <h2>Как дойти от отчёта до вычета</h2>
-              <p id="journeyIntro">Мы убрали налоговую бюрократию в четыре последовательных шага. Выполняйте сверху вниз.</p>
+              <p id="journeyIntro">Мы превратили найденные расходы в три понятных шага. Начните с организаций, у которых нужно получить подтверждения.</p>
             </div>
             <div class="journeyMoney"><span>Ваш ориентир</span><b id="journeyRefund">—</b></div>
           </div>
@@ -1767,7 +1767,7 @@ function toggleGuideStep(step){
   const st=getGuideState();st[step]=!st[step];setGuideState(st);renderJourney();
 }
 function guideCompletedCount(){
-  const st=getGuideState();return [1,2,3,4].filter(x=>st[x]).length
+  const st=getGuideState();return [1,2,3].filter(x=>st[x]).length
 }
 function providerGroups(items){
   const by={};
@@ -1816,18 +1816,43 @@ function renderJourney(){
   const pharmacy=s.filter(c=>c.category==='pharmacy');
   const years=[...new Set(s.map(c=>c.year).filter(Boolean))].sort();
   const cats=[...new Set(s.map(c=>c.category_name))];
+  const providers=providerGroups(serviceDocs);
 
   const steps=[];
+
   steps.push(`
     <div class="guideStep ${st[1]?'done':''}">
       <button class="guideCheck" onclick="toggleGuideStep(1)">${st[1]?'✓':'1'}</button>
       <div>
-        <div class="guideTop"><div><div class="guideKicker">Шаг 1 · 2 минуты</div><div class="guideTitle">Сначала проверьте, что ФНС уже знает</div></div><span class="guideTag">не запрашивайте лишние справки</span></div>
-        <div class="guideDesc">Организация могла сама передать сведения о расходах. Тогда повторно писать в клинику, фитнес или страховую не нужно.</div>
+        <div class="guideTop">
+          <div>
+            <div class="guideKicker">Шаг 1 · начните отсюда</div>
+            <div class="guideTitle">Получите документы по найденным расходам</div>
+          </div>
+          <span class="guideTag">${providers.length} организаций</span>
+        </div>
+
+        <div class="guideDesc">
+          Tax Radar уже нашёл подходящие платежи. Ниже — конкретные организации,
+          суммы и готовые запросы. Вам не нужно искать, кому и что писать.
+        </div>
+
+        <div class="categoryGuide">${cats.map(x=>`<span>${escapeHtml(x)}</span>`).join('')}</div>
+
         <div class="guideInside">
-          <div class="clickPath"><b>ЛК ФНС</b><span class="chev">→</span><b>Вычеты</b><span class="chev">→</span><b>Сведения по социальным вычетам</b></div>
-          <div class="guideButtons"><a class="guideBtn" href="${FNS_LK_URL}" target="_blank" rel="noopener">Открыть ЛК ФНС ↗</a><button class="guideBtn secondary" onclick="toggleGuideStep(1)">Я проверил</button></div>
-          <div class="guideNote">Если нужная организация и сумма уже отображаются — переходите к шагу 3. Если нет — шаг 2 покажет, кому написать.</div>
+          ${buildProviderRows(serviceDocs)}
+          ${buildMedicinePharmacyNote(pharmacy)}
+
+          <div class="guideNote">
+            <b>Что просить у организации:</b> попросите передать сведения о расходах
+            в ФНС для налогового вычета. Если организация не может передать их
+            электронно — попросите справку для налогового органа. Готовый текст
+            уже сформирован для каждой организации выше.
+          </div>
+
+          <div class="guideButtons">
+            <button class="guideBtn secondary" onclick="toggleGuideStep(1)">Документы запросил</button>
+          </div>
         </div>
       </div>
     </div>`);
@@ -1836,11 +1861,51 @@ function renderJourney(){
     <div class="guideStep ${st[2]?'done':''}">
       <button class="guideCheck" onclick="toggleGuideStep(2)">${st[2]?'✓':'2'}</button>
       <div>
-        <div class="guideTop"><div><div class="guideKicker">Шаг 2 · только если данных нет в ФНС</div><div class="guideTitle">Запросите недостающие подтверждения</div></div><span class="guideTag">${providerGroups(serviceDocs).length} запросов</span></div>
-        <div class="guideDesc">Просите организацию в первую очередь <b>передать сведения напрямую в ФНС</b>. Если технически не может — получить унифицированную справку.</div>
-        <div class="categoryGuide">${cats.map(x=>`<span>${escapeHtml(x)}</span>`).join('')}</div>
-        <div class="guideInside">${buildProviderRows(serviceDocs)}${buildMedicinePharmacyNote(pharmacy)}
-          <div class="guideButtons"><button class="guideBtn secondary" onclick="toggleGuideStep(2)">Запросы отправлены</button></div>
+        <div class="guideTop">
+          <div>
+            <div class="guideKicker">Шаг 2 · когда получили подтверждения</div>
+            <div class="guideTitle">Подайте вычет в Личном кабинете ФНС</div>
+          </div>
+          <span class="guideTag">${years.join(', ')||'нужный год'}</span>
+        </div>
+
+        <div class="guideDesc">
+          Когда справки готовы или организации подтвердили передачу сведений,
+          переходите в Личный кабинет ФНС. Дальше есть два сценария — выбирайте
+          тот, который видите у себя.
+        </div>
+
+        <div class="routeGrid">
+          <div class="routeCard recommended">
+            <span class="routeBadge">если ФНС уже получила сведения</span>
+            <b>Упрощённый вычет</b>
+            <p>
+              Откройте раздел «Вычеты». Если ФНС уже получила данные от клиники,
+              фитнеса, страховой или другой организации, появится готовое или
+              предзаполненное заявление. Проверьте суммы и подтвердите его.
+            </p>
+          </div>
+
+          <div class="routeCard">
+            <b>Если готового заявления нет</b>
+            <p>
+              Откройте «Декларации → Подать декларацию», выберите нужный год и
+              внесите данные из полученных справок в раздел социальных вычетов.
+              Для лекарств приложите назначение врача и подтверждение покупки.
+            </p>
+          </div>
+        </div>
+
+        <div class="guideInside">
+          <div class="clickPath">
+            <b>ЛК ФНС</b><span class="chev">→</span><b>Вычеты</b>
+            <span class="chev">или</span><b>Декларации → Подать декларацию</b>
+          </div>
+
+          <div class="guideButtons">
+            <a class="guideBtn" href="${FNS_LK_URL}" target="_blank" rel="noopener">Открыть ЛК ФНС ↗</a>
+            <button class="guideBtn secondary" onclick="toggleGuideStep(2)">Вычет подан</button>
+          </div>
         </div>
       </div>
     </div>`);
@@ -1849,40 +1914,42 @@ function renderJourney(){
     <div class="guideStep ${st[3]?'done':''}">
       <button class="guideCheck" onclick="toggleGuideStep(3)">${st[3]?'✓':'3'}</button>
       <div>
-        <div class="guideTop"><div><div class="guideKicker">Шаг 3 · выберите один путь</div><div class="guideTitle">Подайте вычет через Личный кабинет ФНС</div></div><span class="guideTag">${years.join(', ')||'нужный год'}</span></div>
-        <div class="guideDesc">Tax Radar не заставляет вас заранее разбираться, нужна ли 3‑НДФЛ. Посмотрите, появились ли сведения в ФНС после шагов 1–2.</div>
-        <div class="routeGrid">
-          <div class="routeCard recommended">
-            <span class="routeBadge">проще</span>
-            <b>Если сведения появились в ФНС</b>
-            <p>Откройте «Вычеты → Вычеты в упрощённом порядке». ФНС формирует предзаполненное заявление; проверьте данные и утвердите его. Декларация 3‑НДФЛ и загрузка справок не нужны.</p>
+        <div class="guideTop">
+          <div>
+            <div class="guideKicker">Шаг 3 · готово</div>
+            <div class="guideTitle">Дождитесь результата от ФНС</div>
           </div>
-          <div class="routeCard">
-            <b>Если сведений в ФНС нет</b>
-            <p>Откройте «Вычеты → Декларации → Подать декларацию». Выберите нужный год, добавьте социальные вычеты и внесите данные из полученных справок. Для лекарств приложите назначение врача и подтверждение оплаты.</p>
+          <span class="guideTag">финальный шаг</span>
+        </div>
+
+        <div class="guideDesc">
+          После отправки ничего дополнительно делать не нужно. Следите за статусом
+          заявления или декларации в Личном кабинете. Если ФНС попросит уточнение,
+          оно появится там же.
+        </div>
+
+        <div class="guideInside">
+          <div class="clickPath">
+            <b>ЛК ФНС</b><span class="chev">→</span><b>Вычеты / Декларации</b>
+            <span class="chev">→</span><b>Статус</b>
+          </div>
+
+          <div class="guideButtons">
+            <a class="guideBtn secondary" href="${FNS_LK_URL}" target="_blank" rel="noopener">Проверить статус ↗</a>
+            <button class="guideBtn secondary" onclick="toggleGuideStep(3)">Готово</button>
           </div>
         </div>
-        <div class="guideButtons"><a class="guideBtn" href="${FNS_LK_URL}" target="_blank" rel="noopener">Перейти в ФНС ↗</a><button class="guideBtn secondary" onclick="toggleGuideStep(3)">Заявление отправлено</button></div>
-      </div>
-    </div>`);
-
-  steps.push(`
-    <div class="guideStep ${st[4]?'done':''}">
-      <button class="guideCheck" onclick="toggleGuideStep(4)">${st[4]?'✓':'4'}</button>
-      <div>
-        <div class="guideTop"><div><div class="guideKicker">Шаг 4 · финиш</div><div class="guideTitle">Следите за статусом в ФНС</div></div><span class="guideTag">ничего больше собирать не нужно</span></div>
-        <div class="guideDesc">После отправки проверяйте уведомления и статус заявления/декларации в Личном кабинете. Если ФНС запросит уточнение — отвечайте через то же обращение и прикладывайте только запрошенные документы.</div>
-        <div class="guideInside"><div class="clickPath"><b>ЛК ФНС</b><span class="chev">→</span><b>Вычеты / Декларации</b><span class="chev">→</span><b>Статус обращения</b></div>
-        <div class="guideButtons"><button class="guideBtn secondary" onclick="toggleGuideStep(4)">Готово</button></div></div>
       </div>
     </div>`);
 
   document.getElementById('journeyBody').innerHTML=steps.join('');
-  const done=guideCompletedCount();
-  document.getElementById('guideProgress').style.width=(done/4*100)+'%';
-  document.getElementById('guideDoneMessage').style.display=done===4?'block':'none';
+
+  const done=[1,2,3].filter(x=>st[x]).length;
+  document.getElementById('guideProgress').style.width=(done/3*100)+'%';
+  document.getElementById('guideDoneMessage').style.display=done===3?'block':'none';
+  document.getElementById('guideDoneMessage').textContent='✓ Всё сделано. Теперь остаётся дождаться результата рассмотрения в ФНС.';
   document.getElementById('journeyRefund').textContent='от '+rub(subsetRefund(s));
-  document.getElementById('journeyIntro').textContent=`${s.length} найденных расходов мы превратили в 4 последовательных шага. Отмечайте выполненное — прогресс сохранится в браузере.`;
+  document.getElementById('journeyIntro').textContent=`Мы нашли ${s.length} подходящих расходов. Чтобы получить вычет, пройдите три шага ниже — начинаем сразу с конкретных организаций и документов.`;
 }
 
 function buildBatch(items){
